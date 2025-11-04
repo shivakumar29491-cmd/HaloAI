@@ -1,5 +1,16 @@
-// main.js — HaloAI (SoX recorder, low-latency pipeline, Whisper + Answer hints)
+// =====================================================
+// HaloAI — main.js (SoX Recorder + Whisper + Web Search Fallback)
+// =====================================================
 require('dotenv').config();
+
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require('electron');
+const { spawn } = require('child_process');
+const fs   = require('fs');
+const os   = require('os');
+const path = require('path');
+const fetch = require('node-fetch');
+const cheerio = require('cheerio');
+const { URL } = require('url');
 
 // --- Ensure SoX is reachable on Windows ---
 process.env.PATH = [
@@ -7,12 +18,6 @@ process.env.PATH = [
   'C:\\Program Files (x86)\\sox-14-4-2',
   process.env.PATH || ''
 ].join(';');
-
-const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require('electron');
-const { spawn } = require('child_process');
-const fs   = require('fs');
-const os   = require('os');
-const path = require('path');
 
 // --------------------------------------------------
 // Window helpers
@@ -84,65 +89,172 @@ function runWhisper(filePath) {
 }
 
 // --------------------------------------------------
-// Quick answer helper (GPT with graceful fallback)
+// Free Web Search (DuckDuckGo + Cheerio)
 // --------------------------------------------------
-async function askOpenAI(userText){
-  if (!process.env.OPENAI_API_KEY) {
-    // Fallback suggestions when no key is configured
-    const hints = localHints(userText);
-    send('log', '[answer] OPENAI_API_KEY not set — showing local suggestions.');
-    return hints;
-  }
-  try{
-    const fetch = (...a) => import('node-fetch').then(({default:f}) => f(...a));
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method:'POST',
-      headers:{
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type':'application/json'
-      },
-      body: JSON.stringify({
-        model: process.env.FALLBACK_MODEL || 'gpt-4o-mini',
-        messages:[
-  {
-    role:'system',
-    content: `You are HaloAI, a real-time assistant.
-Respond instantly and confidently to whatever the user says.
-Never ask clarifying questions — just answer directly.
-If the user says something incomplete, assume intent and reply helpfully.`
-  },
-  { role:'user', content:userText }
-]
-
-      })
+async function duckDuckGoSearch(query, maxResults = 5) {
+  const q = encodeURIComponent(query);
+  const url = `https://html.duckduckgo.com/html/?q=${q}`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  const html = await res.text();
+  const $ = cheerio.load(html);
+  const links = [];
+  $('a.result__a').each((i, el) => {
+    if (links.length >= maxResults) return;
+    const href = $(el).attr('href');
+    if (!href) return;
+    try { const u = new URL(href, 'https://duckduckgo.com'); links.push(u.href); }
+    catch { links.push(href); }
+  });
+  if (links.length === 0) {
+    $('a').each((i, el) => {
+      if (links.length >= maxResults) return;
+      const href = $(el).attr('href');
+      if (href && href.startsWith('http')) links.push(href);
     });
-    if (!r.ok) {
-      const body = await r.text();
-      send('log', `[answer:error] ${r.status} ${r.statusText} — ${body}`);
-      return localHints(userText);
+  }
+  return links.slice(0, maxResults);
+}
+
+async function fetchAndExtract(url) {
+  try {
+    const res = await fetch(url, {
+      timeout: 8000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      }
+    });
+
+    if (!res.ok) return null;
+
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    // Collect visible paragraphs, skipping menus/footers/scripts
+    const paras = [];
+    $('p, article p, div p, section p').each((i, el) => {
+      let t = $(el).text().replace(/\s+/g, ' ').trim();
+      if (t.length > 50 && !/cookie|subscribe|advert/i.test(t)) paras.push(t);
+    });
+
+    // Try alternative containers if no paragraphs found
+    if (paras.length === 0) {
+      $('div').each((i, el) => {
+        const t = $(el).text().replace(/\s+/g, ' ').trim();
+        if (t.length > 80 && t.split(' ').length > 10) paras.push(t);
+      });
     }
-    const j = await r.json();
-    const content = j?.choices?.[0]?.message?.content || '';
-    return content || localHints(userText);
-  } catch(e){
-    send('log', `[answer:error] ${e.message}`);
-    return localHints(userText);
+
+    // Remove duplicates and short entries
+    const uniq = Array.from(new Set(paras))
+      .filter(p => p.length > 40)
+      .slice(0, 10);
+
+    if (uniq.length === 0) return null;
+
+    // Join paragraphs into a single text block
+    return uniq.join('\n\n');
+  } catch (e) {
+    send('log', `[fetchAndExtract error] ${e.message}`);
+    return null;
+  }
+}
+function extractiveSummary(text, query, maxSentences = 6) {
+  if (!text) return '';
+  const qwords = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const sents = text.split(/(?<=[.!?])\s+/);
+  const scored = sents.map(s => {
+    const lw = s.toLowerCase();
+    let score = 0;
+    qwords.forEach(q => { if (lw.includes(q)) score++; });
+    return { s: s.trim(), score };
+  }).sort((a,b) => b.score - a.score);
+  const chosen = scored.filter(x => x.s.length > 30).slice(0, maxSentences).map(x => x.s);
+  return chosen.length ? chosen.join(' ') : sents.slice(0, maxSentences).join(' ').trim();
+}
+async function webSearchFallback(query) {
+  try {
+    const links = await duckDuckGoSearch(query, 4);
+    const results = [];
+
+    for (const url of links) {
+      if (!url.startsWith('http')) continue;
+
+      // Fetch and summarize text from the page
+      const text = await fetchAndExtract(url);
+      const summary = extractiveSummary(text || '', query, 4);
+
+      if (summary && summary.length > 0) {
+        results.push({ url, summary });
+      }
+    }
+
+    // If no summaries found, fallback to a basic message
+    if (results.length === 0) {
+      return `Sorry, I couldn’t find detailed explanations for "${query}". Try rephrasing your question.`;
+    }
+
+    // Combine brief readable explanations instead of raw URLs
+    let combined = `🌐 Here's what I found about "${query}":\n\n`;
+    results.forEach((r, i) => {
+      combined += `🟢 ${i + 1}. ${r.summary}\n\n`;
+    });
+
+    // Add a small note for transparency
+    combined += `💡 (Summaries auto-generated from public web sources)\n`;
+    return combined.trim();
+  } catch (e) {
+    return `(web search error) ${e.message}`;
   }
 }
 
-// Very light local suggestions when GPT is unavailable
-function localHints(t='') {
-  const s = t.toLowerCase();
-  if (s.includes('salesforce')) {
-    return 'Tip: Do you want a quick overview of Sales Cloud vs Service Cloud, or sample Apex + OmniStudio patterns?';
+
+// --------------------------------------------------
+// OpenAI answer (with auto web fallback)
+// --------------------------------------------------
+async function askOpenAI(userText) {
+  try {
+    if (!process.env.OPENAI_API_KEY || !process.env.OPENAI_API_KEY.trim()) {
+      send('log', '[OpenAI] Missing API key — fallback to web search');
+      return await webSearchFallback(userText);
+    }
+
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: process.env.FALLBACK_MODEL || 'gpt-4o-mini',
+        temperature: 0.7,
+        max_tokens: 200,
+        messages: [
+          {
+            role: 'system',
+            content: `You are HaloAI, a helpful assistant. Respond directly and clearly.`
+          },
+          { role: 'user', content: userText }
+        ]
+      })
+    });
+
+    const text = await r.text();
+    let json;
+    try { json = JSON.parse(text); } catch { send('log', `[OpenAI raw] ${text}`); }
+
+    if (json?.error?.message) {
+      send('log', `[OpenAI Error] ${json.error.message} — using web fallback`);
+      return await webSearchFallback(userText);
+    }
+
+    const output = json?.choices?.[0]?.message?.content?.trim();
+    if (!output) return await webSearchFallback(userText);
+    send('log', `[OpenAI reply] ${output}`);
+    return output;
+  } catch (e) {
+    send('log', `[OpenAI Exception] ${e.message} — fallback to web`);
+    return await webSearchFallback(userText);
   }
-  if (s.includes('meeting') || s.includes('agenda')) {
-    return 'Suggestion: Should I summarize key points so far and track action items?';
-  }
-  if (s.includes('deadline') || s.includes('date')) {
-    return 'Reminder idea: Want me to set a follow-up reminder with the due date?';
-  }
-  return 'Got it. Want me to summarize this chunk or draft a short response?';
 }
 
 // --------------------------------------------------
@@ -156,7 +268,7 @@ function tmpDir() {
 function tmpWav(idx){ return path.join(tmpDir(), `chunk_${idx}.wav`); }
 
 // --------------------------------------------------
-// SoX recorder (Windows waveaudio) — fixed rate/bitdepth/mono
+// SoX recorder (Windows waveaudio)
 // --------------------------------------------------
 function recordWithSox(outfile, ms, onDone) {
   const seconds = Math.max(1, Math.round(ms / 1000));
@@ -179,59 +291,38 @@ function recordWithSox(outfile, ms, onDone) {
 }
 
 // --------------------------------------------------
-// Live loop — pipelined (record next chunk immediately)
+// Live pipeline (record + transcribe + answer)
 // --------------------------------------------------
 let live = { on:false, idx:0, transcript:'' };
-
-// Default/configurable fields for UI (shorter chunk for low latency)
 let recConfig = { device: 'default', gainDb: '0', chunkMs: 1500 };
 
 function startChunk() {
   const dMs = recConfig.chunkMs || 1500;
   const outfile = tmpWav(live.idx);
 
-  // Called when recording of this chunk finishes
   const after = () => {
     const size = fs.existsSync(outfile) ? fs.statSync(outfile).size : 0;
     send('log', `[chunk] ${outfile} size=${size} bytes`);
-
-    // Kick off Whisper + answer asynchronously (non-blocking)
     (async () => {
       try {
         const text = (await runWhisper(outfile)) || '';
         if (text) {
           live.transcript += (live.transcript ? ' ' : '') + text;
           send('live:transcript', live.transcript);
-
           const answer = await askOpenAI(text);
-          send('live:answer', `(HaloAI): ${answer}`);
-
           if (answer) send('live:answer', answer);
-        } else {
-          send('log', '[whisper] (empty transcript)');
-        }
-      } catch (e) {
-        send('log', `[whisper:error] ${e.message}`);
-      }
+        } else send('log', '[whisper] (empty transcript)');
+      } catch (e) { send('log', `[whisper:error] ${e.message}`); }
     })();
-
-    // Immediately schedule the next recording (pipeline)
     if (live.on) { live.idx += 1; startChunk(); }
   };
-
   recordWithSox(outfile, dMs, after);
 }
-
-ipcMain.handle('live:start', async () => {
-  if (live.on) return { ok:true };
-  live = { on:true, idx:0, transcript:'' };
-  startChunk();
-  return { ok:true };
-});
+ipcMain.handle('live:start', async () => { if (live.on) return { ok:true }; live = { on:true, idx:0, transcript:'' }; startChunk(); return { ok:true }; });
 ipcMain.handle('live:stop', async () => { live.on = false; return { ok:true }; });
 
 // --------------------------------------------------
-// File mode (manual pick)
+// File Mode (manual file transcribe)
 // --------------------------------------------------
 ipcMain.handle('pick:audio', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
@@ -246,18 +337,14 @@ ipcMain.handle('whisper:transcribe', async (_evt, audioPath) => {
 });
 
 // --------------------------------------------------
-// Renderer compatibility shims (device/config/test)
+// Config + Mic Test
 // --------------------------------------------------
-ipcMain.handle('sox:devices', async () => {
-  // We use Windows default device — still return dropdown value for UI
-  return { items: [], selected: recConfig.device || 'default' };
-});
+ipcMain.handle('sox:devices', async () => ({ items: [], selected: recConfig.device || 'default' }));
 ipcMain.handle('rec:getConfig', async () => recConfig);
 ipcMain.handle('rec:setConfig', async (_e, cfg) => {
   if (cfg?.device !== undefined) recConfig.device = String(cfg.device || 'default');
   if (cfg?.gainDb !== undefined) recConfig.gainDb = String(cfg.gainDb || '0');
   if (cfg?.chunkMs !== undefined) {
-    // clamp to 500–4000 ms for stability (lower => lower latency)
     const v = Math.max(500, Math.min(4000, Number(cfg.chunkMs) || 1500));
     recConfig.chunkMs = v;
   }
@@ -265,7 +352,6 @@ ipcMain.handle('rec:setConfig', async (_e, cfg) => {
   return { ok: true, recConfig };
 });
 
-// Test Mic (3s): record via SoX then run Whisper + answer (to verify end-to-end)
 ipcMain.handle('rec:test', async () => {
   const testfile = path.join(tmpDir(), `test_${Date.now()}.wav`);
   return new Promise((resolve) => {
@@ -274,15 +360,12 @@ ipcMain.handle('rec:test', async () => {
       try { size = fs.statSync(testfile).size; } catch {}
       const out = { ok:true, file:testfile, size, transcript:'' };
       try {
-        send('log', `[test] wrote ${size} bytes to ${testfile}`);
+        send('log', `[test] wrote ${size} bytes`);
         const text = await runWhisper(testfile);
         out.transcript = text || '';
-        // Also demonstrate the answer path here
         const answer = text ? await askOpenAI(text) : '';
         if (answer) send('live:answer', answer);
-      } catch (e) {
-        out.ok = false; out.error = e.message || String(e);
-      }
+      } catch (e) { out.ok = false; out.error = e.message || String(e); }
       resolve(out);
     };
     recordWithSox(testfile, 3000, after);
@@ -290,7 +373,7 @@ ipcMain.handle('rec:test', async () => {
 });
 
 // --------------------------------------------------
-// Window / env IPC
+// Window controls
 // --------------------------------------------------
 ipcMain.handle('window:minimize', () => { if (win && !win.isDestroyed()) win.minimize(); });
 ipcMain.handle('window:maximize', () => {
