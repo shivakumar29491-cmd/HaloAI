@@ -1,0 +1,13 @@
+{
+  "name": "haloai",
+  "version": "0.0.2",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": { "start": "electron ." },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mic": "^2.1.2",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": { "electron": "^30.0.0" }
+}

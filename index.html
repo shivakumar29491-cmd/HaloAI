@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>HaloAI — Transcribe & Answer</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"/>
+  <link rel="stylesheet" href="haloAI.css" />
+</head>
+<body>
+  <div class="window-chrome">
+    <div class="title">HaloAI — Transcribe & Answer</div>
+    <div class="win-buttons">
+      <button id="btn-min" title="Minimize">–</button>
+      <button id="btn-max" title="Maximize">□</button>
+      <button id="btn-close" title="Close">×</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="live">Live</button>
+    <button class="tab" data-tab="pre">Pre-recorded</button>
+    <button class="tab" data-tab="logs">Logs</button>
+  </div>
+
+  <!-- LIVE -->
+  <section id="tab-live" class="panel show">
+    <div class="row card">
+      <div class="group">
+        <label for="soxDevice">Input device</label>
+        <select id="soxDevice" class="w-280"></select>
+        <button id="refreshDevices">Refresh</button>
+      </div>
+
+      <div class="group">
+        <label for="gainDb">Gain (dB)</label>
+        <input id="gainDb" type="number" value="0" class="w-90"/>
+      </div>
+
+      <div class="group">
+        <label for="chunkMs">Chunk (ms)</label>
+        <input id="chunkMs" type="number" value="5000" class="w-100"/>
+      </div>
+
+      <div class="group">
+        <label>Quick check</label>
+        <button id="testMic">Test Mic (3s)</button>
+      </div>
+    </div>
+
+    <div class="row controls">
+      <button id="startBtn" class="primary">Start</button>
+      <button id="stopBtn" class="ghost">Stop</button>
+      <span id="liveState" class="state">idle</span>
+    </div>
+
+    <div class="split">
+      <div class="col">
+        <label>Transcript</label>
+        <textarea id="liveTranscript" rows="12" spellcheck="false"></textarea>
+      </div>
+      <div class="col">
+        <label>Answer</label>
+        <textarea id="liveAnswer" rows="12" spellcheck="false"></textarea>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRE-RECORDED -->
+  <section id="tab-pre" class="panel">
+    <div class="row card">
+      <button id="pickAudioBtn">Pick audio…</button>
+      <button id="transcribeBtn" class="primary">Transcribe</button>
+      <button id="clearBtn" class="ghost">Clear</button>
+      <span id="filePath" class="path">No file selected.</span>
+    </div>
+    <label>Output</label>
+    <textarea id="fileOutput" rows="14" spellcheck="false"></textarea>
+  </section>
+
+  <!-- LOGS -->
+  <section id="tab-logs" class="panel">
+    <label>Logs</label>
+    <textarea id="liveLog" rows="20" spellcheck="false"></textarea>
+  </section>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

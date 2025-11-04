@@ -1,0 +1,73 @@
+:root{
+  --bg: #0b1220;
+  --panel: #111a2b;
+  --border: #1f2a44;
+  --text: #dbe7ff;
+  --muted: #9ab0d0;
+  --accent: #3a86ff;
+  --accent-2: #82aaff;
+  --danger: #ff5d5d;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: var(--bg); color: var(--text);
+}
+button, input, select, textarea { font: inherit; color: var(--text); }
+
+.window-chrome {
+  height: 40px; background: #0e1626; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; padding: 0 10px;
+  -webkit-app-region: drag;
+}
+.window-chrome .win-buttons button { -webkit-app-region: no-drag; }
+.title { opacity: .9; font-weight: 600; }
+
+.win-buttons button {
+  width: 28px; height: 28px; margin-left: 8px; border: 1px solid var(--border);
+  background: #152039; color: var(--muted); border-radius: 6px; cursor: pointer;
+}
+.win-buttons button:hover { background: #1a2746; }
+
+.tabs { display: flex; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
+.tab {
+  background: #14213a; color: var(--muted); border: 1px solid var(--border);
+  padding: 8px 12px; border-radius: 8px; cursor: pointer;
+}
+.tab.active { background: #1b2a4a; color: var(--text); }
+
+.panel { display: none; padding: 12px; }
+.panel.show { display: block; }
+
+.row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+.controls { margin-top: 4px; }
+
+.group { display: flex; align-items: center; gap: 8px; }
+.group label { font-size: 13px; color: var(--muted); }
+
+.w-280 { width: 280px; }
+.w-100 { width: 100px; }
+.w-90  { width: 90px; }
+
+button {
+  background: #172544; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; cursor: pointer; color: var(--text);
+}
+button.primary { background: var(--accent); border-color: transparent; color: white; }
+button.ghost { background: transparent; border-color: var(--border); color: var(--muted); }
+button:hover { filter: brightness(1.1); }
+
+.state { margin-left: 8px; color: var(--accent-2); font-weight: 600; }
+
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.col label, #tab-logs label, #tab-pre label { display:block; margin-bottom:6px; color: var(--muted); }
+
+textarea {
+  width: 100%; resize: vertical; min-height: 160px;
+  background: #0f1830; border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+}
+
+.path { margin-left: 12px; color: var(--muted); }
