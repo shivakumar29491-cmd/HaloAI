@@ -6,6 +6,19 @@ class ChatBox {
     this.fileBtn   = fileBtn;
     this.fileInput = fileInput;
     this.badge     = badge;
+
+    // Unified transcript sink: prefer #liveTranscript (textarea), else #chatFeed (div)
+// Force textarea as the single transcript sink
+this.transcript = document.getElementById('liveTranscript');
+if (this.transcript && 'readOnly' in this.transcript) this.transcript.readOnly = true;
+this.transcript?.setAttribute('contenteditable', 'false');
+this.transcript?.setAttribute('aria-readonly', 'true');
+this.transcript?.setAttribute('spellcheck', 'false');
+
+    // Defensive: make transcript read-only
+    if (this.transcript && 'readOnly' in this.transcript) this.transcript.readOnly = true;
+    if (this.transcript) this.transcript.setAttribute('contenteditable', 'false');
+
     this.bind();
   }
 
@@ -14,9 +27,7 @@ class ChatBox {
       this.sendBtn.addEventListener('click', () => this.submit());
     }
     if (this.input) {
-      this.input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') this.submit();
-      });
+      this.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.submit(); });
     }
     if (this.fileBtn && this.fileInput) {
       this.fileBtn.addEventListener('click', () => this.fileInput.click());
@@ -31,14 +42,63 @@ class ChatBox {
     }
   }
 
+  // Keep Answer box clean of banners / status lines
+  _isStatusyBanner(t) {
+    const x = String(t || '');
+    return (
+      /^\s*🔊\s*Live Companion is ON/i.test(x) ||
+      /^\s*No material changes\./i.test(x) ||
+      /^\s*(Summary:|Action Items|From the web:)/i.test(x) ||
+      /\b(PDF support not installed|PDF load error|Web\+\s+(enabled|disabled))\b/i.test(x) ||
+      /^\s*Tip:\s+/i.test(x) ||
+      /^\s*Status:\s+/i.test(x)
+    );
+  }
+
+  _appendToTranscript(line) {
+    if (!this.transcript) return;
+    const s = String(line ?? '').trim();
+    if (!s) return;
+
+    // textarea sink
+    if ('value' in this.transcript) {
+  const ta = this.transcript;
+  const needsSep = ta.value && !ta.value.endsWith('\n');
+  ta.value += (needsSep ? '\n' : '') + s + '\n\n';   // ← two newlines for clear breaks
+  ta.scrollTop = ta.scrollHeight;
+  return;
+}
+
+
+    // div sink (chatFeed)
+    const div = document.createElement('div');
+    div.className = 'bubble me';
+    div.textContent = s;
+    this.transcript.appendChild(div);
+    this.transcript.scrollTop = this.transcript.scrollHeight;
+  }
+
   async submit() {
     const q = this.input?.value?.trim();
     if (!q) return;
+
+    // 1) Mirror typed text into the single Transcript sink
+    this._appendToTranscript(`You: ${q}`);
+
+    // 2) Clear input
     this.input.value = '';
+
+    // 3) Ask backend (no AI bubble to transcript)
     const ans = await window.electron.invoke('chat:ask', q);
-    if (this.answer) {
-      this.answer.value = (this.answer.value ? this.answer.value + '\n---\n' : '') + (ans || '');
-      this.answer.scrollTop = this.answer.scrollHeight;
+
+    // 4) Answers go ONLY to the Answer textarea
+    if (this.answer && typeof ans === 'string') {
+      const s = ans.trim();
+      if (s && !this._isStatusyBanner(s)) {
+        const sep = this.answer.value ? '\n---\n' : '';
+        this.answer.value = this.answer.value + sep + s;
+        this.answer.scrollTop = this.answer.scrollHeight;
+      }
     }
   }
 

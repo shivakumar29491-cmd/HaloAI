@@ -179,3 +179,10 @@ button.recording,
   color: #ffdcb0;
   animation: halo-led 1.6s ease-in-out infinite;
 }
+#liveTranscript[readonly] { cursor: not-allowed; }
+#liveTranscript:focus { outline: none; }
+#liveTranscript {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  padding: 8px 10px;
+}

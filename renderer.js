@@ -2,6 +2,73 @@
 const $  = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
+// Force textarea as the single transcript sink
+// Force textarea as the single transcript sink
+const transcriptSink = document.getElementById('liveTranscript');
+// --- Harden transcript as display-only (no typing/paste/drop) ---
+function hardenTranscript(el) {
+  if (!el) return;
+  // native readOnly + accessibility
+  el.readOnly = true;
+  el.setAttribute('aria-readonly', 'true');
+  el.setAttribute('contenteditable', 'false');
+  el.setAttribute('spellcheck', 'false');
+  el.setAttribute('autocomplete', 'off');
+  el.setAttribute('autocorrect', 'off');
+  el.setAttribute('autocapitalize', 'off');
+
+  // block edits but allow Ctrl/Cmd+A/C and navigation keys
+  el.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    const allowNav = ['arrowleft','arrowright','arrowup','arrowdown','home','end','pageup','pagedown','tab','escape'].includes(k);
+    const allowCopyAll = (e.ctrlKey || e.metaKey) && (k === 'c' || k === 'a');
+    if (!(allowNav || allowCopyAll)) e.preventDefault();
+  });
+  el.addEventListener('paste', (e) => e.preventDefault());
+  el.addEventListener('drop',  (e) => e.preventDefault());
+  el.addEventListener('cut',   (e) => e.preventDefault());
+}
+
+// call it once
+hardenTranscript(transcriptSink);
+
+// Make transcript display-only (defensive)
+if (transcriptSink) {
+  if ('readOnly' in transcriptSink) transcriptSink.readOnly = true;
+  transcriptSink.setAttribute('contenteditable', 'false');
+}
+
+// --- Unified transcript helpers (used for both typed + spoken lines) ---
+function _appendTranscript(line, cls) {
+  if (!transcriptSink) return;
+  const s = String(line || '').trim();
+  if (!s) return;
+
+  if ('value' in transcriptSink) {
+    const ta = transcriptSink;
+    const needsSep = ta.value && !ta.value.endsWith('\n');
+    ta.value += (needsSep ? '\n' : '') + s + '\n';   // ← always end with newline
+    ta.scrollTop = ta.scrollHeight;
+  } else {
+    const div = document.createElement('div');
+    div.className = cls || 'bubble me';
+    div.textContent = s;
+    transcriptSink.appendChild(div);
+    transcriptSink.scrollTop = transcriptSink.scrollHeight;
+  }
+}
+
+
+// De-dupe helper to avoid double lines (from IPC + companion overlap)
+let __lastLine = '';
+function _appendDedup(prefix, text, cls) {
+  const body = String(text || '').trim();
+  if (!body) return;
+  const line = prefix ? `${prefix} ${body}` : body;
+  if (line === __lastLine) return;
+  __lastLine = line;
+  _appendTranscript(line, cls);
+}
 
 function pickFirst(...els) { return els.find(Boolean) || null; }
 
@@ -138,22 +205,14 @@ on(btnStop, 'click', async () => {
 // Backend → UI
 window.electron?.on('log', (t) => appendLog(t));
 // Backend → UI (Transcript appends line-by-line)
+// Live speech -> Transcript (append lines with 🎙 prefix)
 window.electron?.on('live:transcript', (t) => {
-  if (!liveTranscript) return;
-  const full = String(t || '');
-
-  const lines = full.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
-
-  const existingText = (liveTranscript.value || '').trim();
-  const existing = existingText ? existingText.split(/\r?\n+/) : [];
-
-  const newLines = lines.slice(existing.length);
-  if (newLines.length) {
-    liveTranscript.value += (existingText ? '\n' : '') + newLines.join('\n');
-    liveTranscript.scrollTop = liveTranscript.scrollHeight;
-  }
+  if (!transcriptSink) return;
+  const parts = String(t || '').split(/\r?\n+/).map(x => x.trim()).filter(Boolean);
+  parts.forEach(p => _appendDedup('🎙', p, 'bubble tx')); // 'tx' for system-style bubble if using a div
 });
 
+// AI answers -> Answer box (unchanged)
 window.electron?.on('live:answer', (t) => {
   if (!t) return;
   if (isStatusyBanner(t)) {
@@ -228,62 +287,6 @@ on(btnTest, 'click', async () => {
   } catch {}
 });
 
-// ------------------ Chat + Doc QA (optional UI) ------------------
-const chatInput = $('#chatInput');
-const chatSend  = $('#chatSend');
-const fileBtn   = $('#fileBtn');
-const docInput  = $('#docInput');
-const docBadge  = $('#docBadge');
-
-function showDocBadge(name, count) {
-  if (!docBadge) return;
-  const pretty = name.length > 28 ? '…' + name.slice(-28) : name;
-  docBadge.textContent = `${pretty} • ${count} chars  ×`;
-  docBadge.title = 'Click to remove';
-  docBadge.classList.remove('hidden');
-}
-on(docBadge, 'click', async () => {
-  await window.electron.invoke('doc:clear');
-  docBadge?.classList.add('hidden');
-  if (docBadge) docBadge.textContent = '';
-});
-
-on(chatSend, 'click', async () => {
-  const val = chatInput?.value?.trim();
-  if (!val) return;
-  appendTranscriptLine(`You: ${val}`);
-  chatInput.value = '';
-  try {
-    const ans = await window.electron.invoke('chat:ask', val);
-    if (ans && liveAnswer) {
-      if (!isStatusyBanner(ans)) {
-        liveAnswer.value = (liveAnswer.value ? liveAnswer.value + '\n---\n' : '') + ans;
-        liveAnswer.scrollTop = liveAnswer.scrollHeight;
-      }
-    }
-  } catch (e) { appendLog(`[ui] chat:ask error: ${e.message}`); }
-});
-on(chatInput, 'keydown', (e) => { if (e.key === 'Enter') chatSend?.click(); });
-on(fileBtn, 'click', () => docInput?.click());
-on(docInput, 'change', async () => {
-  const f = docInput?.files?.[0];
-  if (!f) return;
-  const name = f.name.toLowerCase();
-  try {
-    if (name.endsWith('.txt')) {
-      const text = await f.text();
-      const res = await window.electron.invoke('doc:ingestText', { name: f.name, text });
-      if (res?.ok) showDocBadge(f.name, res.chars);
-    } else if (name.endsWith('.pdf')) {
-      const ab = await f.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(ab));
-      const res = await window.electron.invoke('doc:ingestBinary', { name: f.name, bytes, mime: f.type || 'application/pdf' });
-      if (res?.ok) showDocBadge(f.name, res.chars);
-    }
-  } finally {
-    if (docInput) docInput.value = '';
-  }
-});
 
 // --- Live Companion UX wiring ---
 if (window.companion) {
@@ -315,9 +318,11 @@ if (window.companion) {
   });
 
   window.companion.onTranscript((t) => {
-    if (!transcriptEl) return;
-    appendTranscriptChunk(String(t || ''));
-  });
+  const parts = String(t || '').split(/\r?\n+/).map(x => x.trim()).filter(Boolean);
+  parts.forEach(p => _appendDedup('🎙', p, 'bubble tx'));
+});
+
+
 
   window.companion.onSuggestion((s) => {
     const msg = (typeof s === 'string') ? s : (s?.message || '');
