@@ -2,13 +2,13 @@
 const $  = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
-// Force textarea as the single transcript sink
+
 // Force textarea as the single transcript sink
 const transcriptSink = document.getElementById('liveTranscript');
+
 // --- Harden transcript as display-only (no typing/paste/drop) ---
 function hardenTranscript(el) {
   if (!el) return;
-  // native readOnly + accessibility
   el.readOnly = true;
   el.setAttribute('aria-readonly', 'true');
   el.setAttribute('contenteditable', 'false');
@@ -17,7 +17,6 @@ function hardenTranscript(el) {
   el.setAttribute('autocorrect', 'off');
   el.setAttribute('autocapitalize', 'off');
 
-  // block edits but allow Ctrl/Cmd+A/C and navigation keys
   el.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     const allowNav = ['arrowleft','arrowright','arrowup','arrowdown','home','end','pageup','pagedown','tab','escape'].includes(k);
@@ -47,7 +46,7 @@ function _appendTranscript(line, cls) {
   if ('value' in transcriptSink) {
     const ta = transcriptSink;
     const needsSep = ta.value && !ta.value.endsWith('\n');
-    ta.value += (needsSep ? '\n' : '') + s + '\n';   // ← always end with newline
+    ta.value += (needsSep ? '\n' : '') + s + '\n';
     ta.scrollTop = ta.scrollHeight;
   } else {
     const div = document.createElement('div');
@@ -57,7 +56,6 @@ function _appendTranscript(line, cls) {
     transcriptSink.scrollTop = transcriptSink.scrollHeight;
   }
 }
-
 
 // De-dupe helper to avoid double lines (from IPC + companion overlap)
 let __lastLine = '';
@@ -80,11 +78,163 @@ function appendLog(line) {
   liveLog.scrollTop = liveLog.scrollHeight;
 }
 
+// ------------------ API usage panel helpers ------------------
+const apiStats = {};
+
+function renderApiUsagePanel(){
+  const panel = $('#apiUsagePanel');
+  if (!panel) return;
+  const statsArr = Object.values(apiStats);
+  if (!statsArr.length){
+    panel.innerHTML = '<div class="api-usage-empty">No API calls yet in this session.</div>';
+    return;
+  }
+  statsArr.sort((a,b) => a.provider.localeCompare(b.provider));
+  panel.innerHTML = statsArr.map(s => `
+    <div class="api-usage-row">
+      <div class="api-usage-name">${s.provider}</div>
+      <div class="api-usage-metrics">
+        <span class="api-usage-pill">Calls: ${s.calls}</span>
+        ${s.limit != null && s.remaining != null ? `<span class="api-usage-pill">Remaining: ${s.remaining}/${s.limit}</span>` : ''}
+        ${s.lastMs != null ? `<span class="api-usage-pill">Last: ${s.lastMs} ms</span>` : ''}
+        ${s.lastKind ? `<span class="api-usage-pill kind">${s.lastKind}</span>` : ''}
+        ${s.lastAt ? `<span class="api-usage-pill time">${s.lastAt}</span>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+// NEW: periodically pull provider stats from main.js (searchRouter.getProviderStats)
+async function refreshApiUsageFromBackend(){
+  if (!window.electron?.invoke) return;
+  try{
+    const res = await window.electron.invoke('search:stats');
+    if (!res || !res.ok || !res.stats) return;
+    const stats = res.stats;
+    Object.entries(stats).forEach(([provider, s]) => {
+      if (!apiStats[provider]) {
+        apiStats[provider] = {
+          provider,
+          calls: 0,
+          lastKind: '',
+          lastMs: null,
+          lastAt: '',
+          limit: null,
+          remaining: null
+        };
+      }
+      const st = apiStats[provider];
+      // Prefer backend "used" count but don't overwrite if it's missing
+      if (s && typeof s.used === 'number') {
+        st.calls = s.used;
+      }
+    });
+    renderApiUsagePanel();
+  }catch(e){
+    // silent fail — we don't want to spam the log for polling errors
+  }
+}
+
+function handleApiLogLine(line){
+  const raw = String(line || '');
+  if (!/^\s*\[api\]/i.test(raw)) return;
+  const s = raw.replace(/^\s*\[api\]\s*/i,'').trim();
+  const parts = s.split(/\s+/);
+  const kv = {};
+  for (const tok of parts){
+    const idx = tok.indexOf('=');
+    if (idx <= 0) continue;
+    const k = tok.slice(0, idx).toLowerCase();
+    let v = tok.slice(idx+1);
+    v = v.replace(/^"+|"+$/g, '');
+    kv[k] = v;
+  }
+  const provider = kv.provider || 'unknown';
+  if (!apiStats[provider]){
+    apiStats[provider] = {
+      provider,
+      calls: 0,
+      lastKind: '',
+      lastMs: null,
+      lastAt: '',
+      limit: null,
+      remaining: null
+    };
+  }
+  const st = apiStats[provider];
+  st.calls += 1;
+  if (kv.kind) st.lastKind = kv.kind;
+  if (kv.ms && !Number.isNaN(Number(kv.ms))) st.lastMs = Number(kv.ms);
+  if (kv.limit && !Number.isNaN(Number(kv.limit))) st.limit = Number(kv.limit);
+  if (kv.remaining && !Number.isNaN(Number(kv.remaining))) st.remaining = Number(kv.remaining);
+  try{
+    const now = new Date();
+    st.lastAt = now.toLocaleTimeString();
+  }catch{}
+  renderApiUsagePanel();
+}
+
+// ------------------ Doc toggle + DocEnrich wiring ------------------
+const docToggle       = $('#docToggle');
+const docEnrichToggle = $('#docEnrichToggle');
+const searchModeSelect = $('#searchMode');
+
+function setDocToggle(on) {
+  if (!docToggle) return;
+  const active = !!on;
+  docToggle.classList.toggle('active', active);
+  docToggle.textContent = active ? 'Doc • ON' : 'Doc';
+}
+
+function setDocEnrichToggle(on) {
+  if (!docEnrichToggle) return;
+  const active = !!on;
+  docEnrichToggle.classList.toggle('active', active);
+  docEnrichToggle.textContent = active ? 'Enrich • ON' : 'Enrich';
+}
+
+// If the button exists, wire click → backend doc:setUse
+on(docToggle, 'click', async () => {
+  if (!docToggle) return;
+  const next = !docToggle.classList.contains('active');
+  setDocToggle(next);
+  try {
+    const res = await window.electron.invoke('doc:setUse', next);
+    appendLog(`[doc] mode ${res?.useDoc ? 'ON' : 'OFF'}`);
+  } catch (e) {
+    appendLog(`[doc] toggle error: ${e.message}`);
+  }
+});
+
+// DocEnrich toggle → backend doc:enrich:set
+on(docEnrichToggle, 'click', async () => {
+  if (!docEnrichToggle) return;
+  const next = !docEnrichToggle.classList.contains('active');
+  setDocEnrichToggle(next);
+  try {
+    const res = await window.electron.invoke('doc:enrich:set', next);
+    appendLog(`[doc] enrich ${res?.docEnrich ? 'ON' : 'OFF'}`);
+  } catch (e) {
+    appendLog(`[doc] enrich toggle error: ${e.message}`);
+  }
+});
+
+// Search mode dropdown → backend searchPrefs:set
+on(searchModeSelect, 'change', async () => {
+  if (!searchModeSelect) return;
+  const mode = searchModeSelect.value || 'fastest';
+  try {
+    const res = await window.electron.invoke('searchPrefs:set', { mode });
+    appendLog(`[search] mode=${res?.mode || mode}`);
+  } catch (e) {
+    appendLog(`[search] prefs error: ${e.message}`);
+  }
+});
+
 function setState(txt) {
   const el = $('#liveState');
   if (el) {
     el.textContent = txt;
-    // pulse class when starting/listening
     const on = /listening|starting/i.test(String(txt || ''));
     el.classList.toggle('pulsing', on);
   }
@@ -136,8 +286,7 @@ const liveAnswer      = $('#liveAnswer');
 const liveStatus      = $('#liveStatus');
 const companionToggle = $('#companionToggle');
 const transcriptEl    = $('#liveTranscript');
-const answerEl        = $('#liveAnswer');   // existing
-// NOTE: chat feed intentionally not used; we’re keeping Live ultra-clean
+const answerEl        = $('#liveAnswer');
 
 // --- Single Transcript helpers ---
 let _txSeenLen = 0;
@@ -150,7 +299,7 @@ function _ensureTrailingNewline(el){
 function appendTranscriptLine(line) {
   if (!liveTranscript) return;
   const s = String(line ?? '').trim();
-  if (!s || s === _txLastLine) return;     // de-dupe consecutive duplicates
+  if (!s || s === _txLastLine) return;
   _txLastLine = s;
   liveTranscript.value += (liveTranscript.value ? '\n' : '') + s;
   _ensureTrailingNewline(liveTranscript);
@@ -158,7 +307,6 @@ function appendTranscriptLine(line) {
 }
 
 function appendTranscriptChunk(chunk){
-  // Split on newlines and append each cleanly
   const parts = String(chunk || '').split(/\r?\n+/).map(p => p.trim()).filter(Boolean);
   parts.forEach(p => appendTranscriptLine(`🎙 ${p}`));
 }
@@ -185,7 +333,6 @@ on(btnStart, 'click', async () => {
     } else {
       setState('error');
     }
-    // Pulse + LED active
     document.body.classList.add('companion-on');
     btnStart?.classList.add('recording');
   } catch (e) {
@@ -197,22 +344,21 @@ on(btnStart, 'click', async () => {
 on(btnStop, 'click', async () => {
   try { await window.electron?.invoke('live:stop'); } catch {}
   setState('idle');
-  // Stop pulse + LED
   document.body.classList.remove('companion-on');
   btnStart?.classList.remove('recording');
 });
 
 // Backend → UI
-window.electron?.on('log', (t) => appendLog(t));
-// Backend → UI (Transcript appends line-by-line)
+window.electron?.on('log', (t) => { appendLog(t); handleApiLogLine(t); });
+
 // Live speech -> Transcript (append lines with 🎙 prefix)
 window.electron?.on('live:transcript', (t) => {
   if (!transcriptSink) return;
   const parts = String(t || '').split(/\r?\n+/).map(x => x.trim()).filter(Boolean);
-  parts.forEach(p => _appendDedup('🎙', p, 'bubble tx')); // 'tx' for system-style bubble if using a div
+  parts.forEach(p => _appendDedup('🎙', p, 'bubble tx'));
 });
 
-// AI answers -> Answer box (unchanged)
+// AI answers -> Answer box
 window.electron?.on('live:answer', (t) => {
   if (!t) return;
   if (isStatusyBanner(t)) {
@@ -287,7 +433,6 @@ on(btnTest, 'click', async () => {
   } catch {}
 });
 
-
 // --- Live Companion UX wiring ---
 if (window.companion) {
   on(companionToggle, 'click', async () => {
@@ -301,16 +446,15 @@ if (window.companion) {
   window.companion.onState((s) => {
     const onState = s === 'on';
     if (onState) {
-      setState('listening');                          // show while ON
-      document.body.classList.add('companion-on');    // keep pulse styles active
+      setState('listening');
+      document.body.classList.add('companion-on');
       companionToggle?.classList.add('active','pulsing');
       companionToggle.textContent = 'Companion • ON';
     } else {
-      setState('');                                   // <— CLEAR when OFF
-      document.body.classList.remove('companion-on'); // stop pulse styles
+      setState('');
+      document.body.classList.remove('companion-on');
       companionToggle?.classList.remove('active','pulsing');
       companionToggle.textContent = 'Companion';
-      // if the textarea was showing a placeholder "Listening…", wipe it
       if (liveTranscript && liveTranscript.value.trim() === 'Listening…') {
         liveTranscript.value = '';
       }
@@ -318,11 +462,9 @@ if (window.companion) {
   });
 
   window.companion.onTranscript((t) => {
-  const parts = String(t || '').split(/\r?\n+/).map(x => x.trim()).filter(Boolean);
-  parts.forEach(p => _appendDedup('🎙', p, 'bubble tx'));
-});
-
-
+    const parts = String(t || '').split(/\r?\n+/).map(x => x.trim()).filter(Boolean);
+    parts.forEach(p => _appendDedup('🎙', p, 'bubble tx'));
+  });
 
   window.companion.onSuggestion((s) => {
     const msg = (typeof s === 'string') ? s : (s?.message || '');
@@ -333,6 +475,63 @@ if (window.companion) {
     }
   });
 }
+
+// ------------------ Chat + Doc QA (file ingest + chat-to-answer) ------------------
+const chatInput = $('#chatInput');
+const chatSend  = $('#chatSend');
+const fileBtn   = $('#fileBtn');
+const docInput  = $('#docInput');
+const docBadge  = $('#docBadge');
+
+function showDocBadge(name, count) {
+  if (!docBadge) return;
+  const pretty = name.length > 28 ? '…' + name.slice(-28) : name;
+  docBadge.textContent = `${pretty} • ${count} chars  ×`;
+  docBadge.title = 'Click to remove';
+  docBadge.classList.remove('hidden');
+}
+on(docBadge, 'click', async () => {
+  await window.electron.invoke('doc:clear');
+  docBadge?.classList.add('hidden');
+  if (docBadge) docBadge.textContent = '';
+});
+
+on(chatSend, 'click', async () => {
+  const val = chatInput?.value?.trim();
+  if (!val) return;
+  _appendDedup('You:', val, 'bubble user');
+  chatInput.value = '';
+  try {
+    const ans = await window.electron.invoke('chat:ask', val);
+    if (ans && liveAnswer) {
+      if (!isStatusyBanner(ans)) {
+        liveAnswer.value = (liveAnswer.value ? liveAnswer.value + '\n---\n' : '') + ans;
+        liveAnswer.scrollTop = liveAnswer.scrollHeight;
+      }
+    }
+  } catch (e) { appendLog(`[ui] chat:ask error: ${e.message}`); }
+});
+on(chatInput, 'keydown', (e) => { if (e.key === 'Enter') chatSend?.click(); });
+on(fileBtn, 'click', () => docInput?.click());
+on(docInput, 'change', async () => {
+  const f = docInput?.files?.[0];
+  if (!f) return;
+  const name = f.name.toLowerCase();
+  try {
+    if (name.endsWith('.txt')) {
+      const text = await f.text();
+      const res = await window.electron.invoke('doc:ingestText', { name: f.name, text });
+      if (res?.ok) showDocBadge(f.name, res.chars);
+    } else if (name.endsWith('.pdf')) {
+      const ab = await f.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(ab));
+      const res = await window.electron.invoke('doc:ingestBinary', { name: f.name, bytes, mime: f.type || 'application/pdf' });
+      if (res?.ok) showDocBadge(f.name, res.chars);
+    }
+  } finally {
+    if (docInput) docInput.value = '';
+  }
+});
 
 // ------------------ Pre-recorded ------------------
 const pickAudioBtn  = $('#pickAudioBtn');
@@ -367,4 +566,11 @@ on(clearBtn, 'click', () => { if (fileOutput) fileOutput.value = ''; });
   if (!liveTranscript) {
     appendLog('[ui] WARNING: #liveTranscript not found in DOM');
   }
+  // Default search mode
+  if (searchModeSelect) {
+    searchModeSelect.value = 'fastest';
+  }
+  // Periodically sync backend provider stats into the API usage panel
+  refreshApiUsageFromBackend();
+  setInterval(refreshApiUsageFromBackend, 10000);
 })();

@@ -1,5 +1,6 @@
 // =====================================================
 // HaloAI — main.js (Recorder + Whisper + Chat + Doc QA + Live Companion)
+// Phase 5.11–5.15 updates included + Brave API wiring
 // =====================================================
 require('dotenv').config();
 
@@ -12,6 +13,9 @@ const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 const { URL } = require('url');
 let pdfParse = null; // lazy-load for PDFs
+
+const { smartSearch, getProviderStats } = require('./search/searchRouter');
+const { BraveApi }    = require('./search/engines/braveApi');
 
 process.env.PATH = [
   'C:\\Program Files\\sox',
@@ -26,6 +30,21 @@ function send(ch, payload) {
     try { win.webContents.send(ch, payload); } catch {}
   }
 }
+
+// --- Web search engines (Brave wrapper) ---
+let braveSearch = null;
+
+function initSearchEngines() {
+  try {
+    braveSearch = new BraveApi({
+      log: (msg) => send('log', `[Brave] ${msg}`)
+    });
+    send('log', '[Brave] search engine initialized.');
+  } catch (e) {
+    send('log', `[Brave:init:error] ${e.message}`);
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 920,
@@ -45,6 +64,7 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 app.whenReady().then(() => {
+  initSearchEngines(); // NEW: wire Brave on boot
   createWindow();
   try {
     globalShortcut.register('CommandOrControl+Shift+Space', () => {
@@ -73,15 +93,15 @@ function runWhisper(filePath){
       try { if (fs.existsSync(outTxt)) fs.unlinkSync(outTxt); } catch {}
 
       const args = [
-  '-m', WHISPER_MODEL,
-  '-f', filePath,
-  '-otxt',
-  '-l', LANG,
-  '-t', String(WHISPER_THREADS)
-];
-if (Number(WHISPER_NGL) > 0) {
-  args.push('-ngl', String(WHISPER_NGL));
-}
+        '-m', WHISPER_MODEL,
+        '-f', filePath,
+        '-otxt',
+        '-l', LANG,
+        '-t', String(WHISPER_THREADS)
+      ];
+      if (Number(WHISPER_NGL) > 0) {
+        args.push('-ngl', String(WHISPER_NGL));
+      }
 
       send('log', `[spawn] ${WHISPER_BIN}\n[args] ${args.join(' ')}`);
       const child = spawn(WHISPER_BIN, args, { windowsHide:true });
@@ -103,7 +123,7 @@ if (Number(WHISPER_NGL) > 0) {
   });
 }
 
-// ---------------- Web utils ----------------
+// ---------------- Web utils (legacy DuckDuckGo helpers, backup only) ----------------
 async function duckDuckGoSearch(query, maxResults = 5) {
   const q = encodeURIComponent(query);
   const url = `https://html.duckduckgo.com/html/?q=${q}`;
@@ -122,26 +142,37 @@ async function duckDuckGoSearch(query, maxResults = 5) {
   });
   return links.slice(0, maxResults);
 }
+
 async function fetchAndExtract(url) {
   try{
-    const res = await fetch(url, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
+    // Phase 5.14: tighten timeout + minimal HTML scanning
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    });
+    clearTimeout(timer);
     if (!res.ok) return null;
+
     const html = await res.text();
     const $ = cheerio.load(html);
     const paras = [];
-    $('p, article p, div p, section p').each((i, el) => {
+    // Only scan minimal content-ish nodes
+    $('p, article, div.content, section').each((i, el) => {
       let t = $(el).text().replace(/\s+/g,' ').trim();
       if (t.length > 50 && !/cookie|subscribe|advert/i.test(t)) paras.push(t);
     });
-    if (paras.length === 0) $('div').each((i, el) => {
-      const t = $(el).text().replace(/\s+/g,' ').trim();
-      if (t.length > 80 && t.split(' ').length > 10) paras.push(t);
-    });
+
     const uniq = Array.from(new Set(paras)).filter(p => p.length > 40).slice(0, 10);
     if (uniq.length === 0) return null;
     return uniq.join('\n\n');
-  }catch(e){ send('log', `[fetchAndExtract error] ${e.message}`); return null; }
+  }catch(e){
+    send('log', `[fetchAndExtract error] ${e.message}`);
+    return null;
+  }
 }
+
 function extractiveSummary(text, query, maxSentences = 6) {
   if (!text) return '';
   const qwords = (query || '').toLowerCase().split(/\s+/).filter(Boolean);
@@ -150,28 +181,75 @@ function extractiveSummary(text, query, maxSentences = 6) {
     const lw = s.toLowerCase(); let score = 0;
     qwords.forEach(q => { if (lw.includes(q)) score++; });
     return { s: s.trim(), score };
-  }).sort((a,b) => b.score - a.score);
+  }).sort((a,b) => b.score-a);
   const chosen = scored.filter(x => x.s.length > 30).slice(0, maxSentences).map(x => x.s);
   return chosen.length ? chosen.join(' ') : sents.slice(0, maxSentences).join(' ').trim();
 }
 
 // ---------------- Answering state/funcs ----------------
-let docContext = { name:'', text:'' };
-let webPlus = false; // backend flag (UI removed)
-let useDoc = false;  // default OFF so answers are AI-only
+let docContext = { name:'', text:'', tokens:null };
+let webPlus   = false;   // backend flag (UI removed)
+let useDoc    = false;   // default OFF so answers are AI-only
+let docEnrich = false;   // Phase 5.12: doc-enrichment mode
+
+// Phase 5.15: API preference (Fastest / Cheapest / Most accurate / Local only)
+let searchPrefs = { mode: 'fastest' }; // default
+
+// Phase 5.14: simple in-process cache for search results (10 minutes)
+const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+const searchCache = new Map(); // key -> { ts, results }
+
+async function cachedSmartSearch(query, opts = {}) {
+  const key = String(query || '').trim().toLowerCase();
+  const now = Date.now();
+  const cached = searchCache.get(key);
+  if (cached && (now - cached.ts) < SEARCH_CACHE_TTL_MS) {
+    send('log', `[api] provider=cache kind=web ms=0`);
+    return cached.results;
+  }
+
+  const t0 = Date.now();
+  const results = await smartSearch(query, {
+    ...opts,
+    mode: searchPrefs.mode || 'fastest'
+  });
+  const ms = Date.now() - t0;
+  send('log', `[api] provider=router kind=web ms=${ms}`);
+
+  if (results && Array.isArray(results)) {
+    searchCache.set(key, { ts: now, results });
+  }
+  return results;
+}
 
 // token helpers
 const STOP = new Set('a an and are as at be by for from has have in into is it its of on or s t that the their to was were will with your you about this those these which who whom whose when where how why what can could should would may might not no yes more most very just also than then'.split(' '));
-function tokenize(s){ return (s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w&&w.length>1&&!STOP.has(w)); }
+
+function tokenize(s){
+  return (s||'')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g,' ')
+    .split(/\s+/)
+    .filter(w => w && w.length > 1 && !STOP.has(w));
+}
+
 function chunkText(text, target=1200){
   const chunks=[]; let buf=''; const paras=text.split(/\n{2,}/);
   for(const p of paras){
     if((buf+'\n\n'+p).length<=target){ buf=buf?buf+'\n\n'+p:p; }
-    else { if(buf) chunks.push(buf); if(p.length<=target) chunks.push(p); else { for(let i=0;i<p.length;i+=target) chunks.push(p.slice(i,i+target)); } buf=''; }
+    else {
+      if(buf) chunks.push(buf);
+      if(p.length<=target) chunks.push(p);
+      else {
+        for(let i=0;i<p.length;i+=target) chunks.push(p.slice(i,i+target));
+      }
+      buf='';
+    }
   }
   if(buf) chunks.push(buf);
   return chunks;
 }
+
 function selectRelevantChunks(question, text, k=5){
   const qTokens=tokenize(question); if(qTokens.length===0) return [];
   const chunks=chunkText(text,1400);
@@ -183,11 +261,35 @@ function selectRelevantChunks(question, text, k=5){
   }).sort((a,b)=>b.score-a);
   return scored.slice(0,k).map(x=>x.c);
 }
+
 function detectIntent(q){
   const s=q.toLowerCase();
   if (/(summari[sz]e|tl;dr|overview)/.test(s)) return 'summarize';
   if (/(key points|highlights|bullets?|action items|takeaways)/.test(s)) return 'highlights';
   return 'qa';
+}
+
+// Phase 5.11: doc token match confidence
+function ensureDocTokens() {
+  if (!docContext.text) {
+    docContext.tokens = null;
+    return;
+  }
+  if (!docContext.tokens) {
+    docContext.tokens = new Set(tokenize(docContext.text));
+  }
+}
+
+function docMatchRatio(question) {
+  const qTokens = tokenize(question);
+  if (!qTokens.length || !docContext.text) return 0;
+  ensureDocTokens();
+  const set = docContext.tokens || new Set();
+  let match = 0;
+  for (const t of qTokens) {
+    if (set.has(t)) match++;
+  }
+  return qTokens.length ? (match / qTokens.length) : 0;
 }
 
 // --- Local LLM via Ollama (Llama 3) ---
@@ -221,7 +323,9 @@ async function askLocalLLM(promptText) {
 async function askLocalDocAnswer(question, text){
   const intent=detectIntent(question);
   const k=intent==='qa'?6:10;
-  const ctx=intent==='qa' ? selectRelevantChunks(question,text,k).join('\n\n') : chunkText(text,1400).slice(0,k).join('\n\n');
+  const ctx=intent==='qa'
+    ? selectRelevantChunks(question,text,k).join('\n\n')
+    : chunkText(text,1400).slice(0,k).join('\n\n');
   const prompt = `You are HaloAI. Use ONLY the document below to respond.
 If the document lacks the answer, say "I couldn't find this in the document."
 
@@ -241,24 +345,51 @@ Task: ${
 // --- Local doc/web engines (no API key) ---
 async function localHybridAnswer(question, text){
   const intent = detectIntent(question);
-  const docCtx = intent==='qa' ? selectRelevantChunks(question,text,6).join('\n\n') : chunkText(text,1400).slice(0,8).join('\n\n');
-  const links = await duckDuckGoSearch(question, 3);
+  const docCtx = intent==='qa'
+    ? selectRelevantChunks(question,text,6).join('\n\n')
+    : chunkText(text,1400).slice(0,8).join('\n\n');
+
+  const results = await cachedSmartSearch(question, {
+    maxResults: 4,
+    log: (line) => send('log', line)
+  });
+
   let webCtx = '';
-  for (const u of links){ const t = await fetchAndExtract(u); if (t) webCtx += t + '\n\n'; }
-  const docPart = intent==='summarize' ? extractiveSummary(text,'',10) :
-                  intent==='highlights' ? extractiveSummary(text,'',12) :
-                  extractiveSummary(docCtx, question, 7);
+  if (results && results.length) {
+    webCtx = results
+      .map(r => r.snippet || r.title || '')
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  const docPart = intent==='summarize'
+    ? extractiveSummary(text,'',10)
+    : intent==='highlights'
+      ? extractiveSummary(text,'',12)
+      : extractiveSummary(docCtx, question, 7);
+
   const webPart = extractiveSummary(webCtx, question, 6);
-  if (!docPart && !webPart) return `I couldn't find enough in the document or the web for “${question}”. Try rephrasing.`;
+  if (!docPart && !webPart) {
+    return `I couldn't find enough in the document or the web for “${question}”. Try rephrasing.`;
+  }
   let out = '';
   if (docPart) out += `From your document:\n${docPart}\n\n`;
   if (webPart) out += `From the web:\n${webPart}`;
   return out.trim();
 }
+
 async function localDocAnswer(question, text){
   const intent=detectIntent(question);
-  if (intent==='summarize'){ const s=extractiveSummary(text,'',10); return s||'I read the document but could not extract a clean summary.'; }
-  if (intent==='highlights'){ const s=extractiveSummary(text,'',12); if(!s) return 'No clear highlights found.'; const bullets=s.split(/(?<=[.!?])\s+/).slice(0,8).map(x=>`• ${x.trim()}`).join('\n'); return `Here are the key points:\n${bullets}`; }
+  if (intent==='summarize'){
+    const s=extractiveSummary(text,'',10);
+    return s||'I read the document but could not extract a clean summary.';
+  }
+  if (intent==='highlights'){
+    const s=extractiveSummary(text,'',12);
+    if(!s) return 'No clear highlights found.';
+    const bullets=s.split(/(?<=[.!?])\s+/).slice(0,8).map(x=>`• ${x.trim()}`).join('\n');
+    return `Here are the key points:\n${bullets}`;
+  }
   const ctx=selectRelevantChunks(question,text,6).join('\n\n');
   const ans=extractiveSummary(ctx,question,8);
   return ans || 'I checked the document but didn’t find a clear answer.';
@@ -268,7 +399,9 @@ async function localDocAnswer(question, text){
 async function openAIDocAnswer(question, text){
   const intent=detectIntent(question);
   const k=intent==='qa'?6:12;
-  const ctx=intent==='qa' ? selectRelevantChunks(question,text,k).join('\n\n') : chunkText(text,1400).slice(0,k).join('\n\n');
+  const ctx=intent==='qa'
+    ? selectRelevantChunks(question,text,k).join('\n\n')
+    : chunkText(text,1400).slice(0,k).join('\n\n');
   const sys=`You are HaloAI. Answer ONLY using the provided document. If the document does not contain the answer, say "I couldn't find this in the document." Prefer concise bullets.`;
   const user=`Document: """\n${ctx}\n"""\n\nTask: ${
     intent==='summarize'?'Provide a concise summary.':
@@ -278,30 +411,51 @@ async function openAIDocAnswer(question, text){
   try{
     const r = await fetch('https://api.openai.com/v1/chat/completions',{
       method:'POST',
-      headers:{ 'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type':'application/json' },
-      body:JSON.stringify({ model:process.env.FALLBACK_MODEL||'gpt-4o-mini', temperature:0.3, max_tokens:600,
-        messages:[{role:'system',content:sys},{role:'user',content:user}] })
+      headers:{
+        'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        model:process.env.FALLBACK_MODEL||'gpt-4o-mini',
+        temperature:0.3,
+        max_tokens:600,
+        messages:[{role:'system',content:sys},{role:'user',content:user}]
+      })
     });
     const txt = await r.text(); let json;
     try{ json=JSON.parse(txt); }catch{ send('log',`[OpenAI raw] ${txt}`); }
-    if (json?.error?.message){ send('log',`[OpenAI Error] ${json.error.message}`); return localDocAnswer(question,text); }
+    if (json?.error?.message){
+      send('log',`[OpenAI Error] ${json.error.message}`);
+      return localDocAnswer(question,text);
+    }
     return json?.choices?.[0]?.message?.content?.trim() || localDocAnswer(question,text);
-  }catch(e){ send('log', `[OpenAI Exception] ${e.message}`); return localDocAnswer(question,text); }
+  }catch(e){
+    send('log', `[OpenAI Exception] ${e.message}`);
+    return localDocAnswer(question,text);
+  }
 }
+
 async function openAIHybridAnswer(question, text){
   const intent=detectIntent(question);
   const k=intent==='qa'?6:10;
-  const docCtx=intent==='qa'? selectRelevantChunks(question,text,k).join('\n\n') : chunkText(text,1400).slice(0,k).join('\n\n');
+  const docCtx=intent==='qa'
+    ? selectRelevantChunks(question,text,k).join('\n\n')
+    : chunkText(text,1400).slice(0,k).join('\n\n');
 
-  const links = await duckDuckGoSearch(question, 4);
+  const results = await cachedSmartSearch(question, {
+    maxResults: 4,
+    log: (line) => send('log', line)
+  });
+
   let webSnips = [];
-  for (const u of links){
-    const t = await fetchAndExtract(u);
-    if (t){
-      const sum = extractiveSummary(t, question, 3);
-      if (sum) webSnips.push({url:u, sum});
+  if (results && results.length) {
+    for (const r of results) {
+      const base = r.snippet || r.title || '';
+      const sum = extractiveSummary(base, question, 3);
+      if (sum) webSnips.push({ url: r.url, sum });
     }
   }
+
   const webCtx = webSnips.map((s,i)=>`[${i+1}] ${s.sum} (source: ${s.url})`).join('\n');
 
   const sys = `You are HaloAI. Produce the BEST answer by combining the provided document with external knowledge snippets.
@@ -327,56 +481,199 @@ Write one cohesive answer. If you use web info, reflect it clearly.`;
   try{
     const r = await fetch('https://api.openai.com/v1/chat/completions',{
       method:'POST',
-      headers:{ 'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type':'application/json' },
-      body:JSON.stringify({ model:process.env.FALLBACK_MODEL||'gpt-4o-mini', temperature:0.4, max_tokens:700,
-        messages:[{role:'system',content:sys},{role:'user',content:user}] })
+      headers:{
+        'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        model:process.env.FALLBACK_MODEL||'gpt-4o-mini',
+        temperature:0.4,
+        max_tokens:700,
+        messages:[{role:'system',content:sys},{role:'user',content:user}]
+      })
     });
     const txt = await r.text(); let json;
     try{ json=JSON.parse(txt); }catch{ send('log',`[OpenAI raw] ${txt}`); }
-    if (json?.error?.message){ send('log',`[OpenAI Error] ${json.error.message}`); return await localHybridAnswer(question,text); }
+    if (json?.error?.message){
+      send('log',`[OpenAI Error] ${json.error.message}`);
+      return await localHybridAnswer(question,text);
+    }
     const out = json?.choices?.[0]?.message?.content?.trim();
     return out || await localHybridAnswer(question,text);
-  }catch(e){ send('log', `[OpenAI Exception] ${e.message}`); return await localHybridAnswer(question,text); }
+  }catch(e){
+    send('log', `[OpenAI Exception] ${e.message}`);
+    return await localHybridAnswer(question,text);
+  }
+}
+
+// Phase 5.12 — Doc-enrichment mode: doc-first then web
+async function docEnrichAnswer(question, text) {
+  const hasOpenAIKey = !!(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
+  const useLocalMode  = String(process.env.AI_MODE || '').toLowerCase() === 'local';
+
+  // Phase A: doc-first answer
+  let docPart = '';
+  if (useLocalMode || !hasOpenAIKey) {
+    docPart = await localDocAnswer(question, text);
+  } else {
+    docPart = await openAIDocAnswer(question, text);
+  }
+
+  // Phase B: web enrichment via smartSearch
+  if (searchPrefs.mode === 'local') {
+    // Local-only: cannot call web — just return doc part.
+    return `From your document:\n${docPart}`;
+  }
+
+  const results = await cachedSmartSearch(question, {
+    maxResults: 4,
+    log: (line) => send('log', line)
+  });
+
+  let webCtx = '';
+  if (results && results.length) {
+    webCtx = results
+      .map(r => r.snippet || r.title || '')
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  const webPart = extractiveSummary(webCtx, question, 6);
+
+  // If both are empty / unhelpful, fall back to normal hybrid behavior
+  const docEmpty = !docPart || /couldn'?t find this in the document/i.test(docPart);
+  if (docEmpty && !webPart) {
+    const hasOpenAI = hasOpenAIKey;
+    if (!hasOpenAI || searchPrefs.mode === 'cheapest' || searchPrefs.mode === 'fastest') {
+      return await localHybridAnswer(question, text);
+    }
+    return await openAIHybridAnswer(question, text);
+  }
+
+  let out = '';
+  if (docPart) out += `From your document:\n${docPart.trim()}\n\n`;
+  if (webPart) out += `From the web:\n${webPart.trim()}`;
+  return out.trim();
+}
+
+// --- Brave-only web summary helper (used by genericAnswer fallbacks) ---
+async function braveWebSummary(userText, maxResults = 5) {
+  if (!braveSearch) return null;
+  const q = String(userText || '').trim();
+  if (!q) return null;
+
+  try {
+    const results = await braveSearch.search(q, maxResults);
+    if (!results || !results.length) return null;
+
+    const bullets = results
+      .map(r => {
+        const title = (r.title || '').trim();
+        const snippet = (r.snippet || '').trim();
+        if (!title && !snippet) return '';
+        if (title && snippet) return `${title} — ${snippet}`;
+        return title || snippet;
+      })
+      .filter(Boolean);
+
+    if (!bullets.length) return null;
+    return `From the web (Brave):\n• ${bullets.join('\n• ')}`;
+  } catch (e) {
+    send('log', `[Brave:summary:error] ${e.message}`);
+    return null;
+  }
 }
 
 // --- Generic (no doc) ---
 async function genericAnswer(userText){
+  const mode     = searchPrefs.mode || 'fastest';
   const useLocal = String(process.env.AI_MODE || '').toLowerCase() === 'local';
-  if (useLocal) {
-    return await askLocalLLM(userText);
+
+  // Local-only preference OR AI_MODE=local
+  if (mode === 'local' || useLocal) {
+    if (useLocal) {
+      return await askLocalLLM(userText);
+    }
+    // Local-only selected but no local model configured
+    return 'Local-only mode is enabled, but no local LLM is configured (set AI_MODE=local).';
   }
 
-  if (!process.env.OPENAI_API_KEY || !process.env.OPENAI_API_KEY.trim()){
-    const links = await duckDuckGoSearch(userText, 4);
-    const combined = [];
-    for (const u of links){
-      const t=await fetchAndExtract(u);
-      const s=extractiveSummary(t||'',userText,4);
-      if (s) combined.push(s);
+  const hasOpenAIKey = !!(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
+
+  // "Cheapest" → avoid OpenAI even if key is present; rely on free web search
+  if (!hasOpenAIKey || mode === 'cheapest') {
+    // Try Brave first
+    const brave = await braveWebSummary(userText, 5);
+    if (brave) return brave;
+
+    // Then router (Bing / Serp / PSE / Brave as configured)
+    const results = await cachedSmartSearch(userText, {
+      maxResults: 5,
+      log: (line) => send('log', line)
+    });
+
+    if (!results || !results.length){
+      return `I couldn’t find enough public info for “${userText}”. Try rephrasing.`;
     }
-    return combined.length? `From the web:\n• ${combined.join('\n• ')}` : `I couldn’t find enough public info for “${userText}”. Try rephrasing.`;
+
+    const bullets = results.map(r => {
+      const base = (r.snippet && r.snippet.trim())
+        ? r.snippet.trim()
+        : (r.title || '').trim();
+      const src = r.url ? ` (${r.url})` : '';
+      return `${base}${src}`;
+    });
+
+    return `From the web:\n• ${bullets.join('\n• ')}`;
   }
+
+  // "Fastest" and "Most accurate" both allow OpenAI;
+  // more sophisticated distinctions can be pushed into searchRouter via mode if needed.
   try{
     const r = await fetch('https://api.openai.com/v1/chat/completions',{
       method:'POST',
-      headers:{ 'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type':'application/json' },
-      body:JSON.stringify({ model:process.env.FALLBACK_MODEL||'gpt-4o-mini', temperature:0.7, max_tokens:350,
-        messages:[{role:'system',content:'You are HaloAI. Provide clear, direct answers.'},{role:'user',content:userText}] })
+      headers:{
+        'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        model:process.env.FALLBACK_MODEL||'gpt-4o-mini',
+        temperature:0.7,
+        max_tokens:350,
+        messages:[
+          {role:'system',content:'You are HaloAI. Provide clear, direct answers.'},
+          {role:'user',content:userText}
+        ]
+      })
     });
     const txt = await r.text(); let json;
     try{ json=JSON.parse(txt); }catch{ send('log',`[OpenAI raw] ${txt}`); }
     if (json?.error?.message){ send('log',`[OpenAI Error] ${json.error.message}`); }
     const out = json?.choices?.[0]?.message?.content?.trim();
     if (out) return out;
-  }catch(e){ send('log', `[OpenAI Exception] ${e.message}`); }
-  const links = await duckDuckGoSearch(userText, 4);
-  const pieces=[];
-  for (const u of links){
-    const t=await fetchAndExtract(u);
-    const s=extractiveSummary(t||'',userText,4);
-    if (s) pieces.push(s);
+  }catch(e){
+    send('log', `[OpenAI Exception] ${e.message}`);
   }
-  return pieces.length? `From the web:\n• ${pieces.join('\n• ')}` : `I couldn’t find enough public info for “${userText}”.`;
+
+  // Fallback if OpenAI fails: use router, then Brave
+  const results = await cachedSmartSearch(userText, {
+    maxResults: 4,
+    log: (line) => send('log', line)
+  });
+  if (results && results.length) {
+    const bullets = results.map(r => {
+      const base = (r.snippet && r.snippet.trim())
+        ? r.snippet.trim()
+        : (r.title || '').trim();
+      const src = r.url ? ` (${r.url})` : '';
+      return `${base}${src}`;
+    });
+    return `From the web:\n• ${bullets.join('\n• ')}`;
+  }
+
+  const brave = await braveWebSummary(userText, 5);
+  if (brave) return brave;
+
+  return `I couldn’t find enough public info for “${userText}”.`;
 }
 
 // --- Router ---
@@ -384,21 +681,60 @@ async function answer(userText){
   const q = (userText || '').trim();
   if (!q) return '';
 
-  // If AI_MODE=local, prefer Llama3 for both generic and doc flows
   const useLocal = String(process.env.AI_MODE || '').toLowerCase() === 'local';
-  if (useLocal) {
+  const hasOpenAIKey = !!(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
+  const mode = searchPrefs.mode || 'fastest';
+
+  // If AI_MODE=local, prefer Llama3 for both generic and doc flows
+  if (useLocal || mode === 'local') {
     if (useDoc && docContext.text) return await askLocalDocAnswer(q, docContext.text);
     return await askLocalLLM(q);
   }
 
-  // Cloud/OpenAI path
+  // Cloud/OpenAI + router path
   if (useDoc && docContext.text){
-    const wantsWeb = webPlus || /^web:\s*/i.test(q) || /\b(latest|price|202[4-9]|202\d)\b/i.test(q);
-    if (wantsWeb){
-      if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim()) return await openAIHybridAnswer(q, docContext.text);
-      return await localHybridAnswer(q, docContext.text);
+    // Explicit enrich triggers (per-question) in addition to global flag
+    const enrichFromQuestion = /^enrich:\s*/i.test(q) || /#enrich\b/i.test(q);
+    const docEnrichActive = docEnrich || enrichFromQuestion;
+
+    // Explicit "web:" or obviously webby phrasing
+    const wantsExplicitWeb =
+      webPlus ||
+      /^web:\s*/i.test(q) ||
+      /\b(latest|price|202[4-9]|202\d|stock|stocks|ticker|bitcoin|crypto|forecast|weather|earnings|news)\b/i.test(q);
+
+    // Phase 5.11: doc confidence scoring
+    const match = docMatchRatio(q);
+    const hasStrongDocMatch = match >= 0.20;
+    if (!Number.isNaN(match)) {
+      const pct = Math.round(match * 100);
+      send('log', `[doc] tokenMatch=${pct}% strong=${hasStrongDocMatch}`);
     }
-    if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim()) return await openAIDocAnswer(q, docContext.text);
+
+    // If user wants local-only, we already returned above.
+    // If doc-enrich is active, always do doc+web (if allowed)
+    if (docEnrichActive && mode !== 'local') {
+      return await docEnrichAnswer(q, docContext.text);
+    }
+
+    // If weak doc match OR explicit web request → hybrid path (or fallback doc-only in local-only mode)
+    if (!hasStrongDocMatch || wantsExplicitWeb) {
+      if (mode === 'local') {
+        // local-only: just doc-only answer
+        return hasOpenAIKey
+          ? await openAIDocAnswer(q, docContext.text)
+          : await localDocAnswer(q, docContext.text);
+      }
+      if (!hasOpenAIKey || mode === 'cheapest' || mode === 'fastest') {
+        return await localHybridAnswer(q, docContext.text);
+      }
+      return await openAIHybridAnswer(q, docContext.text);
+    }
+
+    // Strong doc match, no explicit web, no enrich flag → doc-only answer
+    if (hasOpenAIKey && mode !== 'cheapest') {
+      return await openAIDocAnswer(q, docContext.text);
+    }
     return await localDocAnswer(q, docContext.text);
   }
 
@@ -406,22 +742,52 @@ async function answer(userText){
   return await genericAnswer(q);
 }
 
+// --------------- Live / question classifiers (5.13) ---------------
+function isQuestion(text) {
+  const s = String(text || '');
+  return /(\?|^\s*(who|what|why|when|where|which|how|can|could|should|would)\b|please\b)/i.test(s);
+}
+
+function isWebHeavyTopic(text) {
+  const s = String(text || '').toLowerCase();
+  return /\b(stock|stocks|share price|price today|quote|ticker|earnings|revenue|guidance|forecast|weather|temperature|rain|storm|bitcoin|btc|crypto|ethereum|eth|solana|sol|coinbase|spy|qqq|tsla|aapl|nifty|sensex|nasdaq|dow|news|headline)\b/.test(s);
+}
+
+// Live questions: skip doc path, auto-route to web/generic
+async function answerLiveQuestion(text) {
+  const q = String(text || '').trim();
+  if (!q) return '';
+
+  // If finance/markets/weather/news → web-only via genericAnswer
+  if (isWebHeavyTopic(q)) {
+    // genericAnswer already respects searchPrefs + smartSearch/OpenAI
+    return await genericAnswer(q);
+  }
+
+  // For now, all live questions bypass doc context (5.13 requirement)
+  return await genericAnswer(q);
+}
+
 // ---------------- Paths / Recorder ----------------
-function tmpDir(){ const dir=path.join(os.tmpdir(),'haloai'); if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true}); return dir; }
+function tmpDir(){
+  const dir=path.join(os.tmpdir(),'haloai');
+  if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
+  return dir;
+}
 function tmpWav(idx){ return path.join(tmpDir(), `chunk_${idx}.wav`); }
 
 // Use device + gain from existing config (no UI change needed)
 function recordWithSox(outfile, ms, onDone, device = 'default', gainDb = '0'){
   const seconds = Math.max(1, Math.round(ms/1000));
   const devArg = (device && device !== 'default') ? device : 'default';
- const args = [
-  '-q','-t','waveaudio', devArg,
-  '-r','16000','-b','16','-c','1',
-  outfile,
-  // NEW (no silence; small gain)
-  'trim','0', String(seconds),
-  'gain', String(gainDb || '10')
-];
+  const args = [
+    '-q','-t','waveaudio', devArg,
+    '-r','16000','-b','16','-c','1',
+    outfile,
+    // No silence detection; fixed chunk, slight gain
+    'trim','0', String(seconds),
+    'gain', String(gainDb || '10')
+  ];
 
   send('log', `[sox] ${args.join(' ')}`);
   try{
@@ -452,7 +818,6 @@ async function generateCompanionUpdate(kind='rolling'){
   const tx = live.transcript.trim();
   if (!tx) return;
 
-  // Prefer OpenAI/local LLM if available; otherwise extractive fallback
   const sys = `You are HaloAI Live Companion. Listen to a meeting/conversation transcript and provide:
 - A 2–4 line concise summary (no fluff)
 - Up to 5 action items with owners if mentioned
@@ -461,7 +826,9 @@ Keep it short. If nothing new since last update, say "No material changes."`;
   const user = `Transcript (${kind}):\n"""${tx.slice(-6000)}"""`;
 
   let out = '';
-  if (String(process.env.AI_MODE || '').toLowerCase() === 'local') {
+  const useLocal = String(process.env.AI_MODE || '').toLowerCase() === 'local';
+
+  if (useLocal) {
     out = await askLocalLLM(`${sys}\n\n${user}`);
   } else if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim()) {
     try{
@@ -481,7 +848,6 @@ Keep it short. If nothing new since last update, say "No material changes."`;
   }
 
   if (!out) {
-    // Fallback extractive summary
     const summary = extractiveSummary(tx, '', 6);
     const bullets = summary.split(/(?<=[.!?])\s+/).slice(0,5).map(s=>`• ${s.trim()}`).join('\n');
     out = `Summary:\n${summary}\n\nAction Items (draft):\n${bullets || '• (none)'}\n\nTry asking:\n• “What are the top 3 decisions?”\n• “Any blockers and owners?”`;
@@ -497,7 +863,6 @@ function startCompanionTimer(){
   stopCompanionTimer();
   companion.timer = setInterval(async () => {
     const txLen = live.transcript.length;
-    // Only update if transcript grew meaningfully (>= 60 chars) since last update
     if (txLen - companion.lastLen >= 60) {
       await generateCompanionUpdate('rolling');
     }
@@ -508,15 +873,15 @@ function stopCompanionTimer(){
 }
 
 function startChunk(){
-  const dMs=recConfig.chunkMs||1500; const thisIdx = live.idx; const outfile=tmpWav(thisIdx);
+  const dMs=recConfig.chunkMs||1500;
+  const thisIdx = live.idx;
+  const outfile=tmpWav(thisIdx);
   const after=()=>{ 
     const size=fs.existsSync(outfile)?fs.statSync(outfile).size:0; 
     send('log', `[chunk] ${outfile} size=${size} bytes`);
 
-    // schedule next chunk immediately to maximize overlap
     if (live.on){ live.idx = thisIdx + 1; setImmediate(startChunk); }
 
-    // process this chunk
     (async()=>{
       try{
         const text=(await runWhisper(outfile))||'';
@@ -524,10 +889,9 @@ function startChunk(){
           live.transcript+=(live.transcript?'\n':'')+text;
           send('live:transcript',live.transcript);
 
-          // Only answer direct questions immediately; the companion handles summaries on a timer.
-          const looksLikeQuestion = /(\?|please|can you|how do|what|why|when|where|which)\b/i.test(text);
-          if (looksLikeQuestion) {
-            const a=await answer(text);
+          // Phase 5.13: only answer when chunk looks like a user question
+          if (isQuestion(text)) {
+            const a = await answerLiveQuestion(text);
             if(a) send('live:answer',a);
           }
         } else send('log','[whisper] (empty transcript)');
@@ -565,14 +929,14 @@ ipcMain.handle('live:start', async()=>{
   companion.lastUpdateAt = 0;
   startCompanionTimer();
   startChunk();
-  // let the chat know companion is active
+  send('companion:state','on');
   send('live:answer', '🔊 Live Companion is ON. I’ll drop concise updates every ~12 seconds and a final recap when you stop.');
   return {ok:true};
 });
 ipcMain.handle('live:stop', async()=>{
   live.on=false;
   stopCompanionTimer();
-  await generateCompanionUpdate('final'); // flush a final recap
+  await generateCompanionUpdate('final');
   return {ok:true};
 });
 
@@ -612,7 +976,7 @@ ipcMain.handle('doc:ingestText', async(_e,p)=>{
   const name=(p?.name||'document.txt').toString();
   const raw=(p?.text||'').toString();
   const text=raw.replace(/\u0000/g,'').slice(0,200000);
-  docContext={name,text};
+  docContext={name,text,tokens:null};
   send('log', `[doc] loaded text: ${name}, ${text.length} chars`);
   return {ok:true, name, chars:text.length};
 });
@@ -634,7 +998,7 @@ ipcMain.handle('doc:ingestBinary', async(_e,p)=>{
       const buff=Buffer.from(bytes);
       const data=await pdfParse(buff);
       const text=(data.text||'').slice(0,200000);
-      docContext={name,text};
+      docContext={name,text,tokens:null};
       send('log', `[doc] loaded PDF: ${name}, ${text.length} chars`);
       return {ok:true, name, chars:text.length, type:'pdf'};
     }catch(e){
@@ -645,11 +1009,50 @@ ipcMain.handle('doc:ingestBinary', async(_e,p)=>{
   }
   return {ok:false, error:'Unsupported binary type. Use PDF or text formats.'};
 });
-ipcMain.handle('doc:clear', async()=>{ docContext={name:'',text:''}; return {ok:true}; });
-ipcMain.handle('doc:setUse', async(_e, flag)=>{ useDoc = !!flag; return { ok:true, useDoc }; });
+ipcMain.handle('doc:clear', async()=>{
+  docContext={name:'',text:'',tokens:null};
+  return {ok:true};
+});
+ipcMain.handle('doc:setUse', async(_e, flag)=>{
+  useDoc = !!flag;
+  return { ok:true, useDoc };
+});
+
+// Phase 5.12: backend doc-enrich toggle
+ipcMain.handle('doc:enrich:set', async(_e, flag)=>{
+  docEnrich = !!flag;
+  send('log', `[doc] enrich=${docEnrich ? 'ON' : 'OFF'}`);
+  return { ok:true, docEnrich };
+});
+
+// Phase 5.15: search preferences
+ipcMain.handle('searchPrefs:set', async(_e, prefs)=>{
+  const mode = (prefs && prefs.mode || '').toString().toLowerCase();
+  const allowed = ['fastest','cheapest','accurate','local'];
+  if (allowed.includes(mode)) {
+    searchPrefs.mode = mode;
+  }
+  send('log', `[search] mode=${searchPrefs.mode}`);
+  return { ok:true, mode: searchPrefs.mode };
+});
 
 // (Web+ backend toggle kept; UI removed)
-ipcMain.handle('webplus:set', async(_e, flag)=>{ webPlus = !!flag; send('log', `[Web+] ${webPlus?'enabled':'disabled'}`); return { ok:true, webPlus }; });
+ipcMain.handle('webplus:set', async(_e, flag)=>{
+  webPlus = !!flag;
+  send('log', `[Web+] ${webPlus?'enabled':'disabled'}`);
+  return { ok:true, webPlus };
+});
+
+// NEW: expose provider stats to the renderer for the API usage panel
+ipcMain.handle('search:stats', async () => {
+  try {
+    const stats = typeof getProviderStats === 'function' ? getProviderStats() : {};
+    return { ok: true, stats };
+  } catch (e) {
+    send('log', `[search:stats:error] ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+});
 
 // ---------------- Window controls / env ----------------
 ipcMain.handle('window:minimize', ()=>{ if(win && !win.isDestroyed()) win.minimize(); });
