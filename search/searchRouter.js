@@ -220,9 +220,6 @@ async function smartSearch(query, options = {}) {
     }
   }
 
-<<<<<<< HEAD
-  return results || [];
-=======
  const { rescoreSnippets } = require('./searchRouter'); // at top if needed
 
 // --- END OF PRIMARY SEARCH LOGIC ---
@@ -232,18 +229,12 @@ if (!results || !results.length) return [];
 // Apply rescoring on final snippet set
 const rescored = rescoreSnippets(results, query, 4);
 return rescored;
->>>>>>> b3cf0fa (Phase 6.4 complete)
 }
 
 function getProviderStats() {
   return JSON.parse(JSON.stringify(stats));
 }
 
-<<<<<<< HEAD
-module.exports = {
-  smartSearch,
-  getProviderStats
-=======
 // =====================================================
 // SNIPPET RESCORING ENGINE (Phase 6.4)
 // =====================================================
@@ -293,5 +284,4 @@ module.exports = {
   smartSearch,
   getProviderStats,
   rescoreSnippets
->>>>>>> b3cf0fa (Phase 6.4 complete)
 };

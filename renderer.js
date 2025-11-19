@@ -56,8 +56,6 @@ function _appendTranscript(line, cls) {
     transcriptSink.scrollTop = transcriptSink.scrollHeight;
   }
 }
-<<<<<<< HEAD
-=======
 // --- Answer log helper (Phase 6.3) ---
 function appendAnswerBlock(text) {
   if (!liveAnswer) return;
@@ -81,7 +79,6 @@ function appendAnswerBlock(text) {
    // tell main process so it can update pop-out + history
   try { window.electron?.invoke('answer:push', s); } catch {}
 }
->>>>>>> b3cf0fa (Phase 6.4 complete)
 
 // De-dupe helper to avoid double lines (from IPC + companion overlap)
 let __lastLine = '';
@@ -313,14 +310,11 @@ const liveStatus      = $('#liveStatus');
 const companionToggle = $('#companionToggle');
 const transcriptEl    = $('#liveTranscript');
 const answerEl        = $('#liveAnswer');
-<<<<<<< HEAD
-=======
 const screenReadBtn = $('#screenReadBtn');
 const clearAnswer     = $('#clearAnswer');
 const popoutAnswer    = $('#popoutAnswer');
 
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 
 // --- Single Transcript helpers ---
 let _txSeenLen = 0;
@@ -352,8 +346,6 @@ function setTranscriptText(s) {
     liveTranscript.scrollTop = liveTranscript.scrollHeight;
   }
 }
-<<<<<<< HEAD
-=======
 on(screenReadBtn, 'click', async () => {
   if (!window.electron?.invoke) return;
 
@@ -414,7 +406,6 @@ if (answer && !isStatusyBanner(answer)) {
     setState('error');
   }
 });
->>>>>>> b3cf0fa (Phase 6.4 complete)
 
 // Start/Stop
 on(btnStart, 'click', async () => {
@@ -462,19 +453,10 @@ window.electron?.on('live:answer', (t) => {
     try { setState('listening'); } catch {}
     return;
   }
-<<<<<<< HEAD
-  if (liveAnswer) {
-    liveAnswer.value = (liveAnswer.value ? liveAnswer.value + '\n---\n' : '') + t;
-    liveAnswer.scrollTop = liveAnswer.scrollHeight;
-  }
-});
-
-=======
   appendAnswerBlock(t);
 });
 
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 // ------------------ Config / Devices (optional UI) ------------------
 const selDevice  = $('#soxDevice');
 const inpGain    = $('#gainDb');
@@ -571,21 +553,11 @@ if (window.companion) {
   });
 
   window.companion.onSuggestion((s) => {
-<<<<<<< HEAD
-    const msg = (typeof s === 'string') ? s : (s?.message || '');
-    if (!msg || isStatusyBanner(msg)) return;
-    if (answerEl) {
-      answerEl.value += (answerEl.value ? '\n' : '') + msg + '\n';
-      answerEl.scrollTop = answerEl.scrollHeight;
-    }
-  });
-=======
   const msg = (typeof s === 'string') ? s : (s?.message || '');
   if (!msg || isStatusyBanner(msg)) return;
   appendAnswerBlock(msg);
 });
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 }
 
 // ------------------ Chat + Doc QA (file ingest + chat-to-answer) ------------------
@@ -611,20 +583,6 @@ on(docBadge, 'click', async () => {
 on(chatSend, 'click', async () => {
   const val = chatInput?.value?.trim();
   if (!val) return;
-<<<<<<< HEAD
-  _appendDedup('You:', val, 'bubble user');
-  chatInput.value = '';
-  try {
-    const ans = await window.electron.invoke('chat:ask', val);
-    if (ans && liveAnswer) {
-      if (!isStatusyBanner(ans)) {
-        liveAnswer.value = (liveAnswer.value ? liveAnswer.value + '\n---\n' : '') + ans;
-        liveAnswer.scrollTop = liveAnswer.scrollHeight;
-      }
-    }
-  } catch (e) { appendLog(`[ui] chat:ask error: ${e.message}`); }
-});
-=======
   appendTranscriptLine(`You: ${val}`);
   chatInput.value = '';
   try {
@@ -635,7 +593,6 @@ on(chatSend, 'click', async () => {
   } catch (e) { appendLog(`[ui] chat:ask error: ${e.message}`); }
 });
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 on(chatInput, 'keydown', (e) => { if (e.key === 'Enter') chatSend?.click(); });
 on(fileBtn, 'click', () => docInput?.click());
 on(docInput, 'change', async () => {
@@ -680,9 +637,6 @@ on(transcribeBtn, 'click', async () => {
   const r = await window.electron.invoke('whisper:transcribe', pickedPath);
   if (fileOutput) fileOutput.value += (r?.output || '') + '\n';
 });
-<<<<<<< HEAD
-on(clearBtn, 'click', () => { if (fileOutput) fileOutput.value = ''; });
-=======
 on(clearAnswer, 'click', () => {
   if (liveAnswer) liveAnswer.innerHTML = '';
   try { window.electron?.invoke('answer:clear'); } catch {}
@@ -695,7 +649,6 @@ on(popoutAnswer, 'click', async () => {
   }
 });
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 
 // ------------------ Init ------------------
 (async function init(){

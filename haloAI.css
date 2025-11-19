@@ -2,8 +2,6 @@
   --bg:#0b1220; --panel:rgba(17,26,43,.35); --border:rgba(130,170,255,.20);
   --text:#dbe7ff; --muted:#9ab0d0; --accent:#3a86ff; --danger:#ff5d5d;
 }
-<<<<<<< HEAD
-=======
 html, body {
   height: 100%;
   overflow: hidden;   /* prevent outer scrollbars */
@@ -12,7 +10,6 @@ html, body {
   margin: 0;
   background: transparent;
 }
->>>>>>> b3cf0fa (Phase 6.4 complete)
 
 *{box-sizing:border-box}
 
@@ -148,8 +145,6 @@ button:hover{filter:brightness(1.1)}
   border:1px solid var(--border);border-radius:14px;padding:10px;backdrop-filter:blur(10px)
 }
 .answer-header{display:flex;align-items:center;justify-content:space-between}
-<<<<<<< HEAD
-=======
 /* Answer log now uses a <div>, not a <textarea> */
 .answer-log {
   width: 100%;
@@ -193,7 +188,6 @@ button:hover{filter:brightness(1.1)}
   opacity: 0.65;
   text-align: center;
 }
->>>>>>> b3cf0fa (Phase 6.4 complete)
 
 /* Pre-recorded chip */
 .doc-chip{
@@ -209,13 +203,6 @@ button:hover{filter:brightness(1.1)}
   line-height:18px;cursor:pointer
 }
 #liveTranscript {
-<<<<<<< HEAD
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-=======
   /* Let transcript show multiple lines */
   white-space: pre-wrap;
 
@@ -236,7 +223,6 @@ button:hover{filter:brightness(1.1)}
   cursor: text !important;
 }
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 #live-bubble { opacity: .9; }
 
 /* Ensure only the title bar is draggable; all other buttons are clickable */

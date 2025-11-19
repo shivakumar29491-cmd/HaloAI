@@ -14,15 +14,10 @@ const cheerio = require('cheerio');
 const { URL } = require('url');
 let pdfParse = null; // lazy-load for PDFs
 
-<<<<<<< HEAD
-const { smartSearch, getProviderStats } = require('./search/searchRouter');
-const { BraveApi }    = require('./search/engines/braveApi');
-=======
 
 const { smartSearch, getProviderStats } = require('./search/searchRouter');
 const { BraveApi }    = require('./search/engines/braveApi');
 const { initScreenReader } = require('./screenReader');
->>>>>>> b3cf0fa (Phase 6.4 complete)
 
 process.env.PATH = [
   'C:\\Program Files\\sox',
@@ -32,20 +27,15 @@ process.env.PATH = [
 
 // ---------------- Window ----------------
 let win;
-<<<<<<< HEAD
-=======
 let answerWin = null;
 let answerHistory = [];
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 function send(ch, payload) {
   if (win && !win.isDestroyed()) {
     try { win.webContents.send(ch, payload); } catch {}
   }
 }
 
-<<<<<<< HEAD
-=======
 function createWindow() {
   win = new BrowserWindow({
     width: 920,
@@ -87,7 +77,6 @@ function createAnswerWindow() {
   answerWin.on('closed', () => { answerWin = null; });
 }
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 // --- Web search engines (Brave wrapper) ---
 let braveSearch = null;
 
@@ -996,8 +985,6 @@ ipcMain.handle('live:stop', async()=>{
   await generateCompanionUpdate('final');
   return {ok:true};
 });
-<<<<<<< HEAD
-=======
 // ... existing code above ...
 
 // Initialize Screen Reader (OCR) IPC
@@ -1045,7 +1032,6 @@ ipcMain.handle('answer:clear', () => {
   return { ok: true };
 });
 
->>>>>>> b3cf0fa (Phase 6.4 complete)
 
 // ---------------- File mode ----------------
 ipcMain.handle('pick:audio', async()=>{
