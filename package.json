@@ -11,8 +11,17 @@
     "dotenv": "^16.4.5",
     "mic": "^2.1.2",
     "node-fetch": "^2.7.0",
+<<<<<<< HEAD
     "pdf-parse": "^1.1.4",
     "screenshot-desktop": "^1.15.3"
+=======
+<<<<<<< HEAD
+    "pdf-parse": "^1.1.4"
+=======
+    "pdf-parse": "^1.1.4",
+    "screenshot-desktop": "^1.15.3"
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
   },
   "devDependencies": {
     "electron": "^30.0.0"

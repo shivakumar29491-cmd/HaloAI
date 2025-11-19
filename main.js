@@ -14,10 +14,21 @@ const cheerio = require('cheerio');
 const { URL } = require('url');
 let pdfParse = null; // lazy-load for PDFs
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+const { smartSearch, getProviderStats } = require('./search/searchRouter');
+const { BraveApi }    = require('./search/engines/braveApi');
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 const { smartSearch, getProviderStats } = require('./search/searchRouter');
 const { BraveApi }    = require('./search/engines/braveApi');
 const { initScreenReader } = require('./screenReader');
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 process.env.PATH = [
   'C:\\Program Files\\sox',
@@ -27,15 +38,29 @@ process.env.PATH = [
 
 // ---------------- Window ----------------
 let win;
+<<<<<<< HEAD
 let answerWin = null;
 let answerHistory = [];
 
+=======
+<<<<<<< HEAD
+=======
+let answerWin = null;
+let answerHistory = [];
+
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 function send(ch, payload) {
   if (win && !win.isDestroyed()) {
     try { win.webContents.send(ch, payload); } catch {}
   }
 }
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 function createWindow() {
   win = new BrowserWindow({
     width: 920,
@@ -77,6 +102,10 @@ function createAnswerWindow() {
   answerWin.on('closed', () => { answerWin = null; });
 }
 
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 // --- Web search engines (Brave wrapper) ---
 let braveSearch = null;
 
@@ -985,6 +1014,11 @@ ipcMain.handle('live:stop', async()=>{
   await generateCompanionUpdate('final');
   return {ok:true};
 });
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 // ... existing code above ...
 
 // Initialize Screen Reader (OCR) IPC
@@ -1032,6 +1066,10 @@ ipcMain.handle('answer:clear', () => {
   return { ok: true };
 });
 
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 // ---------------- File mode ----------------
 ipcMain.handle('pick:audio', async()=>{

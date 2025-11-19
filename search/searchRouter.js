@@ -220,6 +220,12 @@ async function smartSearch(query, options = {}) {
     }
   }
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+  return results || [];
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
  const { rescoreSnippets } = require('./searchRouter'); // at top if needed
 
 // --- END OF PRIMARY SEARCH LOGIC ---
@@ -229,12 +235,24 @@ if (!results || !results.length) return [];
 // Apply rescoring on final snippet set
 const rescored = rescoreSnippets(results, query, 4);
 return rescored;
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 }
 
 function getProviderStats() {
   return JSON.parse(JSON.stringify(stats));
 }
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+module.exports = {
+  smartSearch,
+  getProviderStats
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 // =====================================================
 // SNIPPET RESCORING ENGINE (Phase 6.4)
 // =====================================================
@@ -284,4 +302,8 @@ module.exports = {
   smartSearch,
   getProviderStats,
   rescoreSnippets
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 };

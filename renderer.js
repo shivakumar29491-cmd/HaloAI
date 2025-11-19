@@ -56,6 +56,11 @@ function _appendTranscript(line, cls) {
     transcriptSink.scrollTop = transcriptSink.scrollHeight;
   }
 }
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 // --- Answer log helper (Phase 6.3) ---
 function appendAnswerBlock(text) {
   if (!liveAnswer) return;
@@ -79,6 +84,10 @@ function appendAnswerBlock(text) {
    // tell main process so it can update pop-out + history
   try { window.electron?.invoke('answer:push', s); } catch {}
 }
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 // De-dupe helper to avoid double lines (from IPC + companion overlap)
 let __lastLine = '';
@@ -310,11 +319,20 @@ const liveStatus      = $('#liveStatus');
 const companionToggle = $('#companionToggle');
 const transcriptEl    = $('#liveTranscript');
 const answerEl        = $('#liveAnswer');
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 const screenReadBtn = $('#screenReadBtn');
 const clearAnswer     = $('#clearAnswer');
 const popoutAnswer    = $('#popoutAnswer');
 
 
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 // --- Single Transcript helpers ---
 let _txSeenLen = 0;
@@ -346,6 +364,7 @@ function setTranscriptText(s) {
     liveTranscript.scrollTop = liveTranscript.scrollHeight;
   }
 }
+<<<<<<< HEAD
 on(screenReadBtn, 'click', async () => {
   if (!window.electron?.invoke) return;
 
@@ -366,6 +385,15 @@ on(screenReadBtn, 'click', async () => {
   setState('screen: capturing…');
 
   try {
+=======
+<<<<<<< HEAD
+=======
+on(screenReadBtn, 'click', async () => {
+  if (!window.electron?.invoke) return;
+
+  try {
+    setState('screen: capturing…');
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
     const res = await window.electron.invoke('screen:readOnce');
 
     if (!res || !res.ok) {
@@ -381,7 +409,10 @@ on(screenReadBtn, 'click', async () => {
       return;
     }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
     // 1) Show OCR text inside the Transcript box
     if (liveTranscript) {
       const existing = (liveTranscript.value || '').trim();
@@ -422,6 +453,10 @@ if (answer && !isStatusyBanner(answer)) {
     setState('error');
   }
 });
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 // Start/Stop
 on(btnStart, 'click', async () => {
@@ -469,10 +504,25 @@ window.electron?.on('live:answer', (t) => {
     try { setState('listening'); } catch {}
     return;
   }
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+  if (liveAnswer) {
+    liveAnswer.value = (liveAnswer.value ? liveAnswer.value + '\n---\n' : '') + t;
+    liveAnswer.scrollTop = liveAnswer.scrollHeight;
+  }
+});
+
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
   appendAnswerBlock(t);
 });
 
 
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 // ------------------ Config / Devices (optional UI) ------------------
 const selDevice  = $('#soxDevice');
 const inpGain    = $('#gainDb');
@@ -569,11 +619,27 @@ if (window.companion) {
   });
 
   window.companion.onSuggestion((s) => {
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+    const msg = (typeof s === 'string') ? s : (s?.message || '');
+    if (!msg || isStatusyBanner(msg)) return;
+    if (answerEl) {
+      answerEl.value += (answerEl.value ? '\n' : '') + msg + '\n';
+      answerEl.scrollTop = answerEl.scrollHeight;
+    }
+  });
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
   const msg = (typeof s === 'string') ? s : (s?.message || '');
   if (!msg || isStatusyBanner(msg)) return;
   appendAnswerBlock(msg);
 });
 
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 }
 
 // ------------------ Chat + Doc QA (file ingest + chat-to-answer) ------------------
@@ -599,6 +665,23 @@ on(docBadge, 'click', async () => {
 on(chatSend, 'click', async () => {
   const val = chatInput?.value?.trim();
   if (!val) return;
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+  _appendDedup('You:', val, 'bubble user');
+  chatInput.value = '';
+  try {
+    const ans = await window.electron.invoke('chat:ask', val);
+    if (ans && liveAnswer) {
+      if (!isStatusyBanner(ans)) {
+        liveAnswer.value = (liveAnswer.value ? liveAnswer.value + '\n---\n' : '') + ans;
+        liveAnswer.scrollTop = liveAnswer.scrollHeight;
+      }
+    }
+  } catch (e) { appendLog(`[ui] chat:ask error: ${e.message}`); }
+});
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
   appendTranscriptLine(`You: ${val}`);
   chatInput.value = '';
   try {
@@ -609,6 +692,10 @@ on(chatSend, 'click', async () => {
   } catch (e) { appendLog(`[ui] chat:ask error: ${e.message}`); }
 });
 
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 on(chatInput, 'keydown', (e) => { if (e.key === 'Enter') chatSend?.click(); });
 on(fileBtn, 'click', () => docInput?.click());
 on(docInput, 'change', async () => {
@@ -653,6 +740,12 @@ on(transcribeBtn, 'click', async () => {
   const r = await window.electron.invoke('whisper:transcribe', pickedPath);
   if (fileOutput) fileOutput.value += (r?.output || '') + '\n';
 });
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+on(clearBtn, 'click', () => { if (fileOutput) fileOutput.value = ''; });
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 on(clearAnswer, 'click', () => {
   if (liveAnswer) liveAnswer.innerHTML = '';
   try { window.electron?.invoke('answer:clear'); } catch {}
@@ -665,6 +758,10 @@ on(popoutAnswer, 'click', async () => {
   }
 });
 
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 // ------------------ Init ------------------
 (async function init(){

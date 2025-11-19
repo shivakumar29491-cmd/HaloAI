@@ -2,6 +2,11 @@
   --bg:#0b1220; --panel:rgba(17,26,43,.35); --border:rgba(130,170,255,.20);
   --text:#dbe7ff; --muted:#9ab0d0; --accent:#3a86ff; --danger:#ff5d5d;
 }
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 html, body {
   height: 100%;
   overflow: hidden;   /* prevent outer scrollbars */
@@ -10,6 +15,10 @@ html, body {
   margin: 0;
   background: transparent;
 }
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 *{box-sizing:border-box}
 
@@ -145,6 +154,11 @@ button:hover{filter:brightness(1.1)}
   border:1px solid var(--border);border-radius:14px;padding:10px;backdrop-filter:blur(10px)
 }
 .answer-header{display:flex;align-items:center;justify-content:space-between}
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 /* Answer log now uses a <div>, not a <textarea> */
 .answer-log {
   width: 100%;
@@ -188,6 +202,10 @@ button:hover{filter:brightness(1.1)}
   opacity: 0.65;
   text-align: center;
 }
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 
 /* Pre-recorded chip */
 .doc-chip{
@@ -203,6 +221,16 @@ button:hover{filter:brightness(1.1)}
   line-height:18px;cursor:pointer
 }
 #liveTranscript {
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+=======
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
   /* Let transcript show multiple lines */
   white-space: pre-wrap;
 
@@ -223,6 +251,10 @@ button:hover{filter:brightness(1.1)}
   cursor: text !important;
 }
 
+<<<<<<< HEAD
+=======
+>>>>>>> b3cf0fa (Phase 6.4 complete)
+>>>>>>> 8066cc021f97a4f8b929df27387cbf610d233e9b
 #live-bubble { opacity: .9; }
 
 /* Ensure only the title bar is draggable; all other buttons are clickable */
