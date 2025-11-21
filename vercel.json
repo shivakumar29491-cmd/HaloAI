@@ -1,11 +1,9 @@
 {
   "version": 2,
-  "functions": {
-    "api/search/*.js": {
-      "runtime": "nodejs20.x"
-    },
-    "api/chat/*.js": {
-      "runtime": "nodejs20.x"
-    }
-  }
+  "builds": [
+    { "src": "api/**/*.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" }
+  ]
 }
