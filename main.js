@@ -244,10 +244,9 @@ async function cachedSmartSearch(query, opts = {}) {
   }
 
   const t0 = Date.now();
-  const results = await smartSearch(query, {
-    ...opts,
-    mode: searchPrefs.mode || 'fastest'
-  });
+  const { unifiedWebSearch } = require("./search/searchRouter");
+const results = await unifiedWebSearch(query, 5);
+
   const ms = Date.now() - t0;
   send('log', `[api] provider=router kind=web ms=${ms}`);
 

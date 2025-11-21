@@ -1,14 +1,16 @@
 // -----------------------------------------------------------
 //  groqEngine.js — LLM Answer Engine (ROOT FOLDER)
+//  Phase 8 — use HaloAI Backend (Vercel)
 // -----------------------------------------------------------
 
+const fetch = require("node-fetch");
+
+// -----------------------------------------------------------
+// 1. GROQ WHISPER TRANSCRIPTION  (via direct Groq API)
+// -----------------------------------------------------------
 const Groq = require("groq-sdk");
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-
-// -----------------------------------------------------------
-// 1. GROQ WHISPER TRANSCRIPTION
-// -----------------------------------------------------------
 async function groqWhisperTranscribe(audioBuffer) {
   try {
     const response = await groq.audio.transcriptions.create({
@@ -17,7 +19,7 @@ async function groqWhisperTranscribe(audioBuffer) {
         mimeType: "audio/wav",
         buffer: audioBuffer,
       },
-      model: "whisper-large-v3",
+      model: "whisper-large-v3"
     });
 
     return response.text || "";
@@ -27,28 +29,36 @@ async function groqWhisperTranscribe(audioBuffer) {
   }
 }
 
-
 // -----------------------------------------------------------
-// 2. FAST LLM ANSWER (MAIN AI ENGINE)
+// 2. FAST ANSWER — USE HALOAI BACKEND (NOT GROQ DIRECT)
 // -----------------------------------------------------------
-// Recommended model: llama-3.1-8b-instant
 async function groqFastAnswer(prompt) {
   try {
-    const completion = await groq.chat.completions.create({
-      messages: [
-        { role: "user", content: prompt }
-      ],
-      model: "llama-3.1-8b-instant",
-      temperature: 0.2
+    const res = await fetch("https://haloai-clean.vercel.app/api/chat/groq", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt })
     });
 
-    return completion.choices?.[0]?.message?.content || "";
+    const json = await res.json();
+
+    if (json?.answer) {
+      return json.answer.trim();
+    }
+
+    if (json?.error) {
+      console.error("Groq Backend Error:", json.error);
+      return "";
+    }
+
+    return "";
   } catch (err) {
-    console.error("Groq LLaMA Error:", err.message);
+    console.error("Groq Backend Fetch Error:", err.message);
     return "";
   }
 }
-
 
 // -----------------------------------------------------------
 // EXPORTS

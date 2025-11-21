@@ -11,3 +11,4 @@ tmp/
 *.mp3
 *.m4a
 *.ogg
+.vercel
