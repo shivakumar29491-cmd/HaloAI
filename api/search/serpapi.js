@@ -1,21 +1,16 @@
 // api/search/serpapi.js
-import fetch from 'node-fetch';
+const fetch = require("node-fetch");
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   try {
-    const { query, maxResults = 5 } = JSON.parse(req.body || '{}');
+    const { query, maxResults = 5 } = req.body || {};
     const key = process.env.SERPAPI_KEY;
 
-    if (!key) {
-      return res.status(500).json({ error: 'Missing SERPAPI_KEY' });
-    }
-    if (!query) {
-      return res.status(400).json({ error: 'Missing query' });
-    }
+    if (!key) return res.status(500).json({ error: "Missing SERPAPI_KEY" });
+    if (!query) return res.status(400).json({ error: "Missing query" });
 
-    const base = 'https://serpapi.com/search.json';
     const url =
-      `${base}?engine=google&q=${encodeURIComponent(query)}&api_key=${key}`;
+      `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(query)}&api_key=${key}`;
 
     const apiRes = await fetch(url);
     const json = await apiRes.json();
@@ -25,10 +20,10 @@ export default async function handler(req, res) {
       : [];
 
     const unified = items.slice(0, maxResults).map(it => ({
-      title: it.title || '',
-      snippet: it.snippet || '',
-      url: it.link || '',
-      provider: 'serpapi'
+      title: it.title || "",
+      snippet: it.snippet || "",
+      url: it.link || "",
+      provider: "serpapi"
     }));
 
     return res.status(200).json({ results: unified });
@@ -36,4 +31,4 @@ export default async function handler(req, res) {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
-}
+};
