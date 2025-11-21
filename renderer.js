@@ -1,3 +1,7 @@
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("DOM fully loaded");
+});
+
 // ------------------ Helpers ------------------
 const $  = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -59,32 +63,45 @@ function _appendTranscript(line, cls) {
   }
 }
 // --- Answer log helper (Phase 6.3) ---
+// --- Answer log helper (safe for any payload) ---
 function appendAnswerBlock(text) {
-const liveAnswer = document.getElementById("liveAnswer");
-if (!liveAnswer) {
-    console.log("appendAnswerBlock: #liveAnswer not found");
+  const container = document.getElementById('liveAnswer');
+  if (!container) {
+    console.error('[answer] #liveAnswer not found in DOM');
     return;
+  }
+
+  // Normalize anything into a printable string
+  let safeText = '';
+  if (text == null) return;
+  if (typeof text === 'string') {
+    safeText = text;
+  } else if (typeof text === 'object' && text.message) {
+    safeText = text.message;
+  } else {
+    try { safeText = JSON.stringify(text, null, 2); }
+    catch { safeText = String(text); }
+  }
+  safeText = String(safeText || '').trim();
+  if (!safeText) return;
+
+  // Build entry
+  const entry = document.createElement('div');
+  entry.className = 'answer-block answer-entry';
+
+  // Escape HTML, preserve code fences and newlines
+  let body = safeText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  body = body.replace(/```(.*?)```/gs, (_m, code) => `<pre><code>${code.trim()}</code></pre>`);
+  body = body.replace(/\n/g, '<br>');
+
+  entry.innerHTML = body;
+  container.appendChild(entry);
+  container.scrollTop = container.scrollHeight;
 }
 
-  const s = String(text || '').trim();
-  if (!s) return;
 
-  const block = document.createElement('div');
-  block.className = 'answer-block';
-  block.textContent = s;
 
-  const sep = document.createElement('div');
-  sep.className = 'answer-separator';
-  sep.textContent = '--- suggestion ended ---';
 
-  liveAnswer.appendChild(block);
-  liveAnswer.appendChild(sep);
-
-  // Auto-scroll to bottom
-  liveAnswer.scrollTop = liveAnswer.scrollHeight;
-   // tell main process so it can update pop-out + history
-  try { window.electron?.invoke('answer:push', s); } catch {}
-}
 
 // De-dupe helper to avoid double lines (from IPC + companion overlap)
 let __lastLine = '';
@@ -133,16 +150,21 @@ function renderApiUsagePanel(){
   `).join('');
 }
 //Grok Renderer
+// Groq Renderer
 async function fastAskGroq(prompt) {
   const start = performance.now();
-  const res = await window.electron.invoke("groq:ask", prompt);
+  const res = await window.electron.invoke("chat:ask", prompt);
   const ms = Math.round(performance.now() - start);
 
-  if (!res.ok) return `Groq Error: ${res.error}`;
-
   appendLog(`GROQ answered in ${ms} ms`);
-  return res.answer;
+
+  if (typeof res === "string") return res;
+  if (res?.answer) return res.answer;
+  if (res?.ok === false) return `Groq Error: ${res.error}`;
+
+  return String(res || "");
 }
+
 
 // NEW: periodically pull provider stats from main.js (searchRouter.getProviderStats)
 async function refreshApiUsageFromBackend(){
@@ -322,14 +344,16 @@ const btnStart = pickFirst($('#startBtn'), $('[data-action="start"]'), $('[title
 const btnStop  = pickFirst($('#stopBtn'),  $('[data-action="stop"]'),  $('[title="Stop"]'));
 
 const liveTranscript = $('#liveTranscript') || document.querySelector('#tab-live textarea');
-//const liveAnswer      = $('#liveAnswer');
-const liveStatus      = $('#liveStatus');
+const liveStatus = $('#liveStatus');
+
 const companionToggle = $('#companionToggle');
 const transcriptEl    = $('#liveTranscript');
 const answerEl        = $('#liveAnswer');
 const screenReadBtn = $('#screenReadBtn');
 const clearAnswer     = $('#clearAnswer');
-const popoutAnswer    = $('#popoutAnswer');
+const chatInput = $('#chatInput');
+const chatSend = $('#chatSend');
+
 
 
 
@@ -342,13 +366,15 @@ function _ensureTrailingNewline(el){
 }
 
 function appendTranscriptLine(line) {
-  if (!liveTranscript) return;
-  const s = String(line ?? '').trim();
-  if (!s || s === _txLastLine) return;
-  _txLastLine = s;
-  liveTranscript.value += (liveTranscript.value ? '\n' : '') + s;
-  _ensureTrailingNewline(liveTranscript);
-  liveTranscript.scrollTop = liveTranscript.scrollHeight;
+  const box = document.getElementById("transcript");
+  if (!box) return;
+
+  const text = typeof line === "string" ? line : JSON.stringify(line);
+  const s = text.trim();
+  if (!s) return;
+
+  box.value += (box.value ? "\n" : "") + s;
+  box.scrollTop = box.scrollHeight;
 }
 
 function appendTranscriptChunk(chunk){
@@ -506,23 +532,39 @@ if (
 });
 
 // Backend → UI
-window.electron?.on('log', (t) => { appendLog(t); handleApiLogLine(t); });
+window.electron?.on("log", (event, t) => {
+  const msg = typeof t === "string" ? t : JSON.stringify(t, null, 2);
+  appendLog(msg);
+  handleApiLogLine(msg);
+});
+
 
 // Live speech -> Transcript (append lines with 🎙 prefix)
-window.electron?.on('live:transcript', (t) => {
+window.electron?.on("live:transcript", (e, data) => {
   if (!transcriptSink) return;
-  const parts = String(t || '').split(/\r?\n+/).map(x => x.trim()).filter(Boolean);
-  parts.forEach(p => _appendDedup('🎙', p, 'bubble tx'));
+
+  // Accept either text or structured object
+  const raw = typeof data === "string" ? data : data?.text || "";
+  if (!raw.trim()) return;
+
+  const parts = raw.split(/\r?\n+/).map(x => x.trim()).filter(Boolean);
+  parts.forEach((p) => _appendDedup("🎙", p, "bubble tx"));
 });
 
 // AI answers -> Answer box
-window.electron?.on('live:answer', (t) => {
+window.electron?.on('live:answer', (event, t) => {
+
   if (!t) return;
   if (isStatusyBanner(t)) {
     try { setState('listening'); } catch {}
     return;
   }
   appendAnswerBlock(t);
+});
+// Generic answer push from main.js
+window.electron?.on("answer:push", (event, text) => {
+  if (!text) return;
+  appendAnswerBlock(text);
 });
 
 
@@ -654,6 +696,12 @@ on(chatInput, 'keydown', (e) => {
     chatInput.value = "";
   }
 });
+on(chatSend, 'click', () => {
+  const val = chatInput.value.trim();
+  if (val) unifiedAsk(val);
+  chatInput.value = "";
+});
+
 on(fileBtn, 'click', () => docInput?.click());
 on(docInput, 'change', async () => {
   const f = docInput?.files?.[0];
@@ -700,16 +748,10 @@ on(transcribeBtn, 'click', async () => {
 
 });
 on(clearAnswer, 'click', () => {
-  if (liveAnswer) liveAnswer.innerHTML = '';
-  try { window.electron?.invoke('answer:clear'); } catch {}
+const container = document.getElementById("liveAnswer");
+if (container) container.innerHTML = '';
 });
-on(popoutAnswer, 'click', async () => {
-  try {
-    await window.electron?.invoke('answerWindow:toggle');
-  } catch (e) {
-    appendLog(`[ui] answerWindow:toggle error: ${e.message}`);
-  }
-});
+
 
 
 // ------------------ Init ------------------
@@ -740,72 +782,46 @@ async function unifiedAsk(promptText) {
     const userPrompt = String(promptText || "").trim();
     if (!userPrompt) return;
 
-    // ---- Intent Detection ----
-    const lower = userPrompt.toLowerCase();
-    const explicitlySummary =
-      lower.startsWith("summarize") ||
-      lower.includes("summary") ||
-      lower.includes("tl;dr");
-
-    const explicitlyFollowup =
-      lower.includes("follow-up") ||
-      lower.includes("follow up") ||
-      lower.includes("next questions");
-
-    const isDirectQuestion =
-      /[?]$/.test(userPrompt) ||
-      /^(what|why|how|who|when|where|is|are|can|should|does|do)\b/i.test(lower);
-
-    // ---- Screen-read context fusion ----
-    let effectivePrompt = userPrompt;
-    if (lastScreenReadContext && isDirectQuestion) {
-      effectivePrompt =
-        `Use the following screen text to answer the question:\n\n` +
-        `--- SCREEN TEXT START ---\n${lastScreenReadContext}\n--- SCREEN TEXT END ---\n\n` +
-        `Question: ${userPrompt}`;
-    }
-
-    // ---- Routing ----
     appendTranscriptLine(`You: ${userPrompt}`);
+    setState("answering");
 
-    // 1) If user wants summary → summarize
-    if (explicitlySummary) {
-      const summaryPrompt =
-        "Summarize this clearly in bullet points:\n\n" + userPrompt;
-      const ans = await fastAskGroq(summaryPrompt);
-      appendAnswerBlock(ans);
-      return;
-    }
+    const effectivePrompt = userPrompt;
 
-    // 2) If user wants follow-up → provide that only
-    if (explicitlyFollowup) {
-      const fuPrompt =
-        "Provide helpful follow-up questions for this:\n\n" + userPrompt;
-      const ans = await fastAskGroq(fuPrompt);
-      appendAnswerBlock(ans);
-      return;
-    }
+    // 1) Direct Groq Fast answer
+    try {
+      const quick = await fastAskGroq(effectivePrompt);
+      console.log("[Renderer] Groq fast returned:", quick);
 
-    // 3) For ANY direct question → regular answer
-    if (isDirectQuestion) {
-      const ans = await fastAskGroq(effectivePrompt);
-      if (typeof ans === "string" && ans.trim() !== "") {
-        appendAnswerBlock(ans);
+      if (quick && typeof quick === "string" && quick.trim() !== "") {
+        appendAnswerBlock(quick.trim());
+        setState("idle");
         return;
       }
-
-      // fallback → main QA engine
-      const fallback = await window.electron.invoke("chat:ask", effectivePrompt);
-      appendAnswerBlock(fallback);
-      return;
+    } catch (err) {
+      console.log("[Renderer] Groq fast error:", err.message);
     }
 
-    // 4) Natural text: treat like ChatGPT
-    const ans = await fastAskGroq(effectivePrompt);
-    appendAnswerBlock(ans);
+    // 2) Cloud router fallback (main.js → answer())
+    const fallback = await window.electron.invoke("chat:ask", effectivePrompt);
+    console.log("[Renderer] Fallback received:", fallback);
+
+    // Normalize ANY return type from main.js into a printable string
+    let final = "";
+    if (typeof fallback === "string") {
+      final = fallback;
+    } else if (fallback?.answer) {
+      final = fallback.answer;
+    } else {
+      final = JSON.stringify(fallback);
+    }
+
+    appendAnswerBlock(final.trim());
+    setState("idle");
 
   } catch (err) {
-    appendLog("[unifiedAsk error] " + err.message);
+    console.log("[Renderer unifiedAsk ERROR]", err);
     appendAnswerBlock("❌ Error: " + err.message);
+    setState("idle");
   }
 }
+

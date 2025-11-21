@@ -37,8 +37,7 @@ process.env.PATH = [
 
 // ---------------- Window ----------------
 let win;
-let answerWin = null;
-let answerHistory = [];
+
 
 function send(ch, payload) {
   if (win && !win.isDestroyed()) {
@@ -65,27 +64,7 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 
-function createAnswerWindow() {
-  if (answerWin && !answerWin.isDestroyed()) return;
 
-  answerWin = new BrowserWindow({
-    width: 520,
-    height: 420,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    titleBarStyle: 'hidden',
-    backgroundMaterial: 'mica',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-
-  answerWin.loadFile('answer.html').catch(e => console.error('[boot] answer load error', e));
-  answerWin.on('closed', () => { answerWin = null; });
-}
 
 // --- Web search engines (Brave wrapper) ---
 let braveSearch = null;
@@ -348,156 +327,115 @@ function docMatchRatio(question) {
   return qTokens.length ? (match / qTokens.length) : 0;
 }
 
-// --- Local LLM via Ollama (Llama 3) ---
-async function askLocalLLM(promptText) {
-  try {
-    const body = {
-      model: 'llama3',
-      prompt: promptText,
-      stream: false,
-      options: { num_predict: 256, temperature: 0.5, top_k: 40, top_p: 0.9 }
-    };
-    const res = await fetch('http://127.0.0.1:11434/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const raw = await res.text();
-    try {
-      const j = JSON.parse(raw);
-      if (typeof j?.response === 'string') return j.response.trim();
-    } catch {}
-    const merged = raw.split('\n').map(l => {
-      try { return JSON.parse(l).response || ''; } catch { return ''; }
-    }).join('').trim();
-    return merged || raw.trim() || '(no reply)';
-  } catch (e) {
-    return `(local LLM error) ${e.message}`;
-  }
-}
-
-async function askLocalDocAnswer(question, text){
-  const intent=detectIntent(question);
-  const k=intent==='qa'?6:10;
-  const ctx=intent==='qa'
-    ? selectRelevantChunks(question,text,k).join('\n\n')
-    : chunkText(text,1400).slice(0,k).join('\n\n');
-  const prompt = `You are HaloAI. Use ONLY the document below to respond.
-If the document lacks the answer, say "I couldn't find this in the document."
-
-Document:
-"""
-${ctx}
-"""
-
-Task: ${
-    intent==='summarize' ? 'Provide a concise summary.' :
-    intent==='highlights' ? 'List key points / action items as bullets.' :
-    `Answer the question strictly from the document: ${question}`
-  }`;
-  return await askLocalLLM(prompt);
-}
-
-// --- Local doc/web engines (no API key) ---
-async function localHybridAnswer(question, text){
-  const intent = detectIntent(question);
-  const docCtx = intent==='qa'
-    ? selectRelevantChunks(question,text,6).join('\n\n')
-    : chunkText(text,1400).slice(0,8).join('\n\n');
-
-  const results = await cachedSmartSearch(question, {
-    maxResults: 4,
-    log: (line) => send('log', line)
-  });
-
-  let webCtx = '';
-  if (results && results.length) {
-    webCtx = results
-      .map(r => r.snippet || r.title || '')
-      .filter(Boolean)
-      .join('\n\n');
-  }
-
-  const docPart = intent==='summarize'
-    ? extractiveSummary(text,'',10)
-    : intent==='highlights'
-      ? extractiveSummary(text,'',12)
-      : extractiveSummary(docCtx, question, 7);
-
-  const webPart = extractiveSummary(webCtx, question, 6);
-  if (!docPart && !webPart) {
-    return `I couldn't find enough in the document or the web for “${question}”. Try rephrasing.`;
-  }
-  let out = '';
-  if (docPart) out += `From your document:\n${docPart}\n\n`;
-  if (webPart) out += `From the web:\n${webPart}`;
-  return out.trim();
-}
-
-async function localDocAnswer(question, text){
-  const intent=detectIntent(question);
-  if (intent==='summarize'){
-    const s=extractiveSummary(text,'',10);
-    return s||'I read the document but could not extract a clean summary.';
-  }
-  if (intent==='highlights'){
-    const s=extractiveSummary(text,'',12);
-    if(!s) return 'No clear highlights found.';
-    const bullets=s.split(/(?<=[.!?])\s+/).slice(0,8).map(x=>`• ${x.trim()}`).join('\n');
-    return `Here are the key points:\n${bullets}`;
-  }
-  const ctx=selectRelevantChunks(question,text,6).join('\n\n');
-  const ans=extractiveSummary(ctx,question,8);
-  return ans || 'I checked the document but didn’t find a clear answer.';
-}
 
 // --- OpenAI engines ---
-async function openAIDocAnswer(question, text){
-  const intent=detectIntent(question);
-  const k=intent==='qa'?6:12;
-  const ctx=intent==='qa'
-    ? selectRelevantChunks(question,text,k).join('\n\n')
-    : chunkText(text,1400).slice(0,k).join('\n\n');
-  const sys=`You are HaloAI. Answer ONLY using the provided document. If the document does not contain the answer, say "I couldn't find this in the document." Prefer concise bullets.`;
-  const user=`Document: """\n${ctx}\n"""\n\nTask: ${
-    intent==='summarize'?'Provide a concise summary.':
-    intent==='highlights'?'List the key points / action items as bullets.':
-    `Answer the question strictly from the document: ${question}`
+async function openAIDocAnswer(question, text) {
+  const intent = detectIntent(question);
+  const k = intent === 'qa' ? 6 : 12;
+
+  const ctx = intent === 'qa'
+    ? selectRelevantChunks(question, text, k).join('\n\n')
+    : chunkText(text, 1400).slice(0, k).join('\n\n');
+
+  const sys = `You are HaloAI. Answer ONLY using the provided document.
+If the document does not contain the answer, say "I couldn't find this in the document."
+Prefer concise bullets.`;
+
+  const user = `Document: """\n${ctx}\n"""\n\nTask: ${
+    intent === 'summarize'
+      ? 'Provide a concise summary.'
+      : intent === 'highlights'
+        ? 'List the key points / action items as bullets.'
+        : `Answer the question strictly from the document: ${question}`
   }`;
-  try{
-    const r = await fetch('https://api.openai.com/v1/chat/completions',{
-      method:'POST',
-      headers:{
-        'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type':'application/json'
+
+  // --- CLOUD-ONLY OpenAI call ---
+  try {
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
       },
-      body:JSON.stringify({
-        model:process.env.FALLBACK_MODEL||'gpt-4o-mini',
-        temperature:0.3,
-        max_tokens:600,
-        messages:[{role:'system',content:sys},{role:'user',content:user}]
+      body: JSON.stringify({
+        model: process.env.FALLBACK_MODEL || 'gpt-4o-mini',
+        temperature: 0.3,
+        max_tokens: 600,
+        messages: [
+          { role: 'system', content: sys },
+          { role: 'user', content: user }
+        ]
       })
     });
-    const txt = await r.text(); let json;
-    try{ json=JSON.parse(txt); }catch{ send('log',`[OpenAI raw] ${txt}`); }
-    if (json?.error?.message){
-      send('log',`[OpenAI Error] ${json.error.message}`);
-      return localDocAnswer(question,text);
+
+    const txt = await r.text();
+    let json = null;
+
+    try {
+      json = JSON.parse(txt);
+    } catch {
+      send('log', `[OpenAI raw] ${txt}`);
     }
-    return json?.choices?.[0]?.message?.content?.trim() || localDocAnswer(question,text);
-  }catch(e){
-    send('log', `[OpenAI Exception] ${e.message}`);
-    return localDocAnswer(question,text);
+
+    // OpenAI error handling
+    if (json?.error?.message) {
+      send('log', `[OpenAI Error] ${json.error.message}`);
+      return `I couldn't find this in the document.`;
+    }
+
+    const out = json?.choices?.[0]?.message?.content?.trim();
+    if (out) return out;
+
+  } catch (err) {
+    send('log', `[OpenAI Exception] ${err.message}`);
   }
+
+  // --- CLOUD FALLBACK ---
+  // Brave summary first
+  try {
+    const brave = await braveWebSummary(question, 4);
+    if (brave) return brave;
+  } catch (e) {
+    send('log', `[Brave fallback error] ${e.message}`);
+  }
+
+  // Router fallback (Bing/SerpAPI/PSE)
+  try {
+    const results = await cachedSmartSearch(question, {
+      maxResults: 4,
+      log: (line) => send('log', line)
+    });
+
+    if (results?.length) {
+      const parts = results.map(r => {
+        const base = r.snippet?.trim() || r.title?.trim() || '';
+        const src = r.url ? ` (${r.url})` : '';
+        return `${base}${src}`;
+      }).filter(Boolean);
+
+      if (parts.length) {
+        return `From the web:\n• ${parts.join('\n• ')}`;
+      }
+    }
+  } catch (e) {
+    send('log', `[Router fallback error] ${e.message}`);
+  }
+
+  // Last fallback
+  return `I couldn't find enough information to answer this from the document or the web.`;
 }
 
-async function openAIHybridAnswer(question, text){
-  const intent=detectIntent(question);
-  const k=intent==='qa'?6:10;
-  const docCtx=intent==='qa'
-    ? selectRelevantChunks(question,text,k).join('\n\n')
-    : chunkText(text,1400).slice(0,k).join('\n\n');
 
+async function openAIHybridAnswer(question, text) {
+  const intent = detectIntent(question);
+  const k = intent === 'qa' ? 6 : 10;
+
+  // --- Document Context ---
+  const docCtx = intent === 'qa'
+    ? selectRelevantChunks(question, text, k).join('\n\n')
+    : chunkText(text, 1400).slice(0, k).join('\n\n');
+
+  // --- Web Search Context ---
   const results = await cachedSmartSearch(question, {
     maxResults: 4,
     log: (line) => send('log', line)
@@ -512,7 +450,9 @@ async function openAIHybridAnswer(question, text){
     }
   }
 
-  const webCtx = webSnips.map((s,i)=>`[${i+1}] ${s.sum} (source: ${s.url})`).join('\n');
+  const webCtx = webSnips
+    .map((s, i) => `[${i + 1}] ${s.sum} (source: ${s.url})`)
+    .join('\n');
 
   const sys = `You are HaloAI. Produce the BEST answer by combining the provided document with external knowledge snippets.
 Rules:
@@ -520,6 +460,7 @@ Rules:
 - Prefer the document when it clearly answers; otherwise enrich with the web snippets.
 - If something conflicts, say so briefly.
 - Use short bullets where helpful.`;
+
   const user = `Question: ${question}
 
 Document context:
@@ -534,82 +475,156 @@ ${webCtx || '(no web snippets)'}
 
 Write one cohesive answer. If you use web info, reflect it clearly.`;
 
-  try{
-    const r = await fetch('https://api.openai.com/v1/chat/completions',{
-      method:'POST',
-      headers:{
-        'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type':'application/json'
+
+  // --- CLOUD-ONLY OpenAI ---
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
       },
-      body:JSON.stringify({
-        model:process.env.FALLBACK_MODEL||'gpt-4o-mini',
-        temperature:0.4,
-        max_tokens:700,
-        messages:[{role:'system',content:sys},{role:'user',content:user}]
+      body: JSON.stringify({
+        model: process.env.FALLBACK_MODEL || "gpt-4o-mini",
+        temperature: 0.4,
+        max_tokens: 700,
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: user }
+        ]
       })
     });
-    const txt = await r.text(); let json;
-    try{ json=JSON.parse(txt); }catch{ send('log',`[OpenAI raw] ${txt}`); }
-    if (json?.error?.message){
-      send('log',`[OpenAI Error] ${json.error.message}`);
-      return await localHybridAnswer(question,text);
+
+    const txt = await r.text();
+    let json = null;
+
+    try {
+      json = JSON.parse(txt);
+    } catch {
+      send("log", `[OpenAI raw] ${txt}`);
     }
-    const out = json?.choices?.[0]?.message?.content?.trim();
-    return out || await localHybridAnswer(question,text);
-  }catch(e){
-    send('log', `[OpenAI Exception] ${e.message}`);
-    return await localHybridAnswer(question,text);
+
+    if (json?.error?.message) {
+      send("log", `[OpenAI Error] ${json.error.message}`);
+    } else {
+      const out = json?.choices?.[0]?.message?.content?.trim();
+      if (out) return out;
+    }
+
+  } catch (err) {
+    send("log", `[OpenAI Exception] ${err.message}`);
   }
+
+  // --------------------
+  // CLOUD FALLBACK
+  // --------------------
+
+  // Brave summary
+  try {
+    const brave = await braveWebSummary(question, 5);
+    if (brave) return brave;
+  } catch (e) {
+    send("log", `[Brave fallback error] ${e.message}`);
+  }
+
+  // Router (Bing / SerpAPI / Google PSE)
+  try {
+    const fallbackResults = await cachedSmartSearch(question, {
+      maxResults: 4,
+      log: (line) => send("log", line)
+    });
+
+    if (fallbackResults?.length) {
+      const parts = fallbackResults.map(r => {
+        const base = r.snippet?.trim() || r.title?.trim() || '';
+        const src = r.url ? ` (${r.url})` : '';
+        return `${base}${src}`;
+      }).filter(Boolean);
+
+      if (parts.length) {
+        return `From the web:\n• ${parts.join("\n• ")}`;
+      }
+    }
+  } catch (e) {
+    send("log", `[Router fallback error] ${e.message}`);
+  }
+
+  // Absolute last fallback
+  return `I couldn't find enough combined document + web information to answer this.`;
 }
+
 
 // Phase 5.12 — Doc-enrichment mode: doc-first then web
 async function docEnrichAnswer(question, text) {
   const hasOpenAIKey = !!(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
-  const useLocalMode  = String(process.env.AI_MODE || '').toLowerCase() === 'local';
 
-  // Phase A: doc-first answer
+  // -------------------------------
+  // PHASE A: DOC-FIRST (OpenAI only)
+  // -------------------------------
   let docPart = '';
-  if (useLocalMode || !hasOpenAIKey) {
-    docPart = await localDocAnswer(question, text);
-  } else {
+
+  if (hasOpenAIKey) {
     docPart = await openAIDocAnswer(question, text);
+  } else {
+    // If no OpenAI key → direct fallback
+    const summary = extractiveSummary(text, question, 6);
+    docPart = summary || `I couldn't find this in the document.`;
   }
 
-  // Phase B: web enrichment via smartSearch
-  if (searchPrefs.mode === 'local') {
-    // Local-only: cannot call web — just return doc part.
-    return `From your document:\n${docPart}`;
-  }
-
+  // -------------------------------
+  // PHASE B: WEB ENRICHMENT
+  // -------------------------------
   const results = await cachedSmartSearch(question, {
     maxResults: 4,
-    log: (line) => send('log', line)
+    log: (line) => send("log", line)
   });
 
-  let webCtx = '';
+  let webCtx = "";
   if (results && results.length) {
     webCtx = results
-      .map(r => r.snippet || r.title || '')
+      .map((r) => r.snippet || r.title || "")
       .filter(Boolean)
-      .join('\n\n');
+      .join("\n\n");
   }
+
   const webPart = extractiveSummary(webCtx, question, 6);
 
-  // If both are empty / unhelpful, fall back to normal hybrid behavior
-  const docEmpty = !docPart || /couldn'?t find this in the document/i.test(docPart);
+  // -------------------------------
+  // PHASE C: HYBRID FALLBACK
+  // If doc lacks answer AND web lacks answer
+  // -------------------------------
+  const docEmpty =
+    !docPart ||
+    /couldn'?t find this in the document/i.test(docPart);
+
   if (docEmpty && !webPart) {
-    const hasOpenAI = hasOpenAIKey;
-    if (!hasOpenAI || searchPrefs.mode === 'cheapest' || searchPrefs.mode === 'fastest') {
-      return await localHybridAnswer(question, text);
+    // Try full hybrid answer (OpenAI only)
+    try {
+      const hybrid = await openAIHybridAnswer(question, text);
+      if (hybrid) return hybrid;
+    } catch (e) {
+      send("log", `[Hybrid OpenAI error] ${e.message}`);
     }
-    return await openAIHybridAnswer(question, text);
+
+    return `I couldn't find enough information in the document or the web to answer this.`;
   }
 
-  let out = '';
-  if (docPart) out += `From your document:\n${docPart.trim()}\n\n`;
-  if (webPart) out += `From the web:\n${webPart.trim()}`;
+  // -------------------------------
+  // PHASE D: COMBINE DOC + WEB
+  // -------------------------------
+  let out = "";
+
+  if (docPart) {
+    out += `From your document:\n${docPart.trim()}\n\n`;
+  }
+
+  if (webPart) {
+    out += `From the web:\n${webPart.trim()}`;
+  }
+
   return out.trim();
 }
+
 
 // --- Brave-only web summary helper (used by genericAnswer fallbacks) ---
 async function braveWebSummary(userText, maxResults = 5) {
@@ -639,29 +654,20 @@ async function braveWebSummary(userText, maxResults = 5) {
   }
 }
 
+
 // --- Generic (no doc) ---
 async function genericAnswer(userText){
-  const mode     = searchPrefs.mode || 'fastest';
-  const useLocal = String(process.env.AI_MODE || '').toLowerCase() === 'local';
+  const mode = searchPrefs.mode || 'fastest';
 
-  // Local-only preference OR AI_MODE=local
-  if (mode === 'local' || useLocal) {
-    if (useLocal) {
-      return await askLocalLLM(userText);
-    }
-    // Local-only selected but no local model configured
-    return 'Local-only mode is enabled, but no local LLM is configured (set AI_MODE=local).';
-  }
+  // Phase 8: cloud-only — removed all local LLM logic
 
   const hasOpenAIKey = !!(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
 
   // "Cheapest" → avoid OpenAI even if key is present; rely on free web search
   if (!hasOpenAIKey || mode === 'cheapest') {
-    // Try Brave first
     const brave = await braveWebSummary(userText, 5);
     if (brave) return brave;
 
-    // Then router (Bing / Serp / PSE / Brave as configured)
     const results = await cachedSmartSearch(userText, {
       maxResults: 5,
       log: (line) => send('log', line)
@@ -682,8 +688,7 @@ async function genericAnswer(userText){
     return `From the web:\n• ${bullets.join('\n• ')}`;
   }
 
-  // "Fastest" and "Most accurate" both allow OpenAI;
-  // more sophisticated distinctions can be pushed into searchRouter via mode if needed.
+  // "Fastest" and "Most accurate" → allow OpenAI
   try{
     const r = await fetch('https://api.openai.com/v1/chat/completions',{
       method:'POST',
@@ -710,7 +715,7 @@ async function genericAnswer(userText){
     send('log', `[OpenAI Exception] ${e.message}`);
   }
 
-  // Fallback if OpenAI fails: use router, then Brave
+  // Fallback → router → Brave
   const results = await cachedSmartSearch(userText, {
     maxResults: 4,
     log: (line) => send('log', line)
@@ -732,71 +737,93 @@ async function genericAnswer(userText){
   return `I couldn’t find enough public info for “${userText}”.`;
 }
 
+
 // --- Router ---
-async function answer(userText){
+// ---------------- CLOUD-ONLY ROUTER (Phase 8) ----------------
+async function answer(userText) {
   const q = (userText || '').trim();
+  send("log", `[answer()] received prompt: ${q}`);
+console.log("[answer()] received prompt:", q);
+
   if (!q) return '';
 
-  const useLocal = String(process.env.AI_MODE || '').toLowerCase() === 'local';
-  const hasOpenAIKey = !!(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
-  const mode = searchPrefs.mode || 'fastest';
-
-  // If AI_MODE=local, prefer Llama3 for both generic and doc flows
-  if (useLocal || mode === 'local') {
-    if (useDoc && docContext.text) return await askLocalDocAnswer(q, docContext.text);
-    return await askLocalLLM(q);
+  // 1) GROQ FAST ANSWER FIRST
+  try {
+    const fast = await groqFastAnswer(q);
+    if (fast && typeof fast === "string" && fast.trim() !== "") {
+      return fast.trim();
+    }
+  } catch (err) {
+    send("log", `[Groq fast error] ${err.message}`);
   }
 
-  // Cloud/OpenAI + router path
-  if (useDoc && docContext.text){
-    // Explicit enrich triggers (per-question) in addition to global flag
-    const enrichFromQuestion = /^enrich:\s*/i.test(q) || /#enrich\b/i.test(q);
-    const docEnrichActive = docEnrich || enrichFromQuestion;
-
-    // Explicit "web:" or obviously webby phrasing
-    const wantsExplicitWeb =
-      webPlus ||
-      /^web:\s*/i.test(q) ||
-      /\b(latest|price|202[4-9]|202\d|stock|stocks|ticker|bitcoin|crypto|forecast|weather|earnings|news)\b/i.test(q);
-
-    // Phase 5.11: doc confidence scoring
-    const match = docMatchRatio(q);
-    const hasStrongDocMatch = match >= 0.20;
-    if (!Number.isNaN(match)) {
-      const pct = Math.round(match * 100);
-      send('log', `[doc] tokenMatch=${pct}% strong=${hasStrongDocMatch}`);
-    }
-
-    // If user wants local-only, we already returned above.
-    // If doc-enrich is active, always do doc+web (if allowed)
-    if (docEnrichActive && mode !== 'local') {
-      return await docEnrichAnswer(q, docContext.text);
-    }
-
-    // If weak doc match OR explicit web request → hybrid path (or fallback doc-only in local-only mode)
-    if (!hasStrongDocMatch || wantsExplicitWeb) {
-      if (mode === 'local') {
-        // local-only: just doc-only answer
-        return hasOpenAIKey
-          ? await openAIDocAnswer(q, docContext.text)
-          : await localDocAnswer(q, docContext.text);
-      }
-      if (!hasOpenAIKey || mode === 'cheapest' || mode === 'fastest') {
-        return await localHybridAnswer(q, docContext.text);
-      }
-      return await openAIHybridAnswer(q, docContext.text);
-    }
-
-    // Strong doc match, no explicit web, no enrich flag → doc-only answer
-    if (hasOpenAIKey && mode !== 'cheapest') {
-      return await openAIDocAnswer(q, docContext.text);
-    }
-    return await localDocAnswer(q, docContext.text);
+  // 2) BRAVE DIRECT SUMMARY (super fast)
+  try {
+    const brave = await braveWebSummary(q, 5);
+    if (brave) return brave;
+  } catch (err) {
+    send("log", `[Brave error] ${err.message}`);
   }
 
-  // AI-only (default)
-  return await genericAnswer(q);
+  // 3) ROUTED WEB SEARCH (Bing, SerpAPI, PSE...)
+  try {
+    const results = await cachedSmartSearch(q, {
+      maxResults: 5,
+      log: (line) => send("log", line)
+    });
+
+    if (results && results.length) {
+      const bullets = results
+        .map(r => {
+          const base = r.snippet?.trim() || r.title?.trim() || "";
+          const src = r.url ? ` (${r.url})` : "";
+          return `${base}${src}`;
+        })
+        .filter(Boolean);
+
+      if (bullets.length) {
+        return `From the web:\n• ${bullets.join("\n• ")}`;
+      }
+    }
+  } catch (err) {
+    send("log", `[Router error] ${err.message}`);
+  }
+
+  // 4) OPENAI FALLBACK (only if API key exists)
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: process.env.FALLBACK_MODEL || "gpt-4o-mini",
+          temperature: 0.5,
+          max_tokens: 300,
+          messages: [
+            { role: "system", content: "You are HaloAI with cloud-only mode." },
+            { role: "user", content: q }
+          ]
+        })
+      });
+
+      const txt = await r.text();
+      let json;
+      try { json = JSON.parse(txt); } catch {}
+
+      const out = json?.choices?.[0]?.message?.content?.trim();
+      if (out) return out;
+    } catch (err) {
+      send("log", `[OpenAI fallback error] ${err.message}`);
+    }
+  }
+
+  // 5) If absolutely everything failed
+  return `I couldn't find information for "${q}".`;
 }
+
 
 // --------------- Live / question classifiers (5.13) ---------------
 function isQuestion(text) {
@@ -870,7 +897,7 @@ const companion = {
 };
 
 // Compose a rolling “Live Companion” update from transcript
-async function generateCompanionUpdate(kind='rolling'){
+async function generateCompanionUpdate(kind = 'rolling') {
   const tx = live.transcript.trim();
   if (!tx) return;
 
@@ -879,33 +906,47 @@ async function generateCompanionUpdate(kind='rolling'){
 - Up to 5 action items with owners if mentioned
 - Helpful suggested prompts the user could say to you next
 Keep it short. If nothing new since last update, say "No material changes."`;
+
   const user = `Transcript (${kind}):\n"""${tx.slice(-6000)}"""`;
 
   let out = '';
-  const useLocal = String(process.env.AI_MODE || '').toLowerCase() === 'local';
 
-  if (useLocal) {
-    out = await askLocalLLM(`${sys}\n\n${user}`);
-  } else if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim()) {
-    try{
-      const r = await fetch('https://api.openai.com/v1/chat/completions',{
-        method:'POST',
-        headers:{ 'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type':'application/json' },
-        body:JSON.stringify({
+  // Phase 8 — CLOUD ONLY (no local LLM)
+  if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim()) {
+    try {
+      const r = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
           model: process.env.FALLBACK_MODEL || 'gpt-4o-mini',
           temperature: 0.3,
           max_tokens: 400,
-          messages: [{ role:'system', content: sys }, { role:'user', content: user }]
+          messages: [
+            { role: 'system', content: sys },
+            { role: 'user', content: user }
+          ]
         })
       });
+
       const j = await r.json();
       out = j?.choices?.[0]?.message?.content?.trim() || '';
-    }catch(e){ send('log', `[Companion(OpenAI) error] ${e.message}`); }
+    } catch (e) {
+      send('log', `[Companion(OpenAI) error] ${e.message}`);
+    }
   }
 
+  // Fallback summary (if OpenAI fails)
   if (!out) {
     const summary = extractiveSummary(tx, '', 6);
-    const bullets = summary.split(/(?<=[.!?])\s+/).slice(0,5).map(s=>`• ${s.trim()}`).join('\n');
+    const bullets = summary
+      .split(/(?<=[.!?])\s+/)
+      .slice(0, 5)
+      .map(s => `• ${s.trim()}`)
+      .join('\n');
+
     out = `Summary:\n${summary}\n\nAction Items (draft):\n${bullets || '• (none)'}\n\nTry asking:\n• “What are the top 3 decisions?”\n• “Any blockers and owners?”`;
   }
 
@@ -913,6 +954,7 @@ Keep it short. If nothing new since last update, say "No material changes."`;
   companion.lastLen = tx.length;
   companion.lastUpdateAt = Date.now();
 }
+
 
 function startCompanionTimer(){
   if (!companion.enabled) return;
@@ -1006,14 +1048,14 @@ ipcMain.handle("groq:transcribe", async (_e, audioBuffer) => {
   }
 });
 // FAST answering using Groq LLaMA (Phase 7)
-ipcMain.handle("groq:ask", async (_e, prompt) => {
+/*ipcMain.handle("groq:ask", async (_e, prompt) => {
   try {
     const ans = await groqFastAnswer(prompt);
     return { ok: true, answer: ans };
   } catch (err) {
     return { ok: false, error: err.message };
   }
-});
+});*/
 
 // Initialize Screen Reader (OCR) IPC
 initScreenReader({
@@ -1029,44 +1071,6 @@ ipcMain.on("ocr:image", async (event, imgBuffer) => {
   }
 });
 
-// ---------------- Answer log / pop-out IPC ----------------
-ipcMain.handle('answerWindow:toggle', async () => {
-  if (answerWin && !answerWin.isDestroyed()) {
-    if (answerWin.isVisible()) {
-      answerWin.focus();
-    } else {
-      answerWin.show();
-    }
-  } else {
-    createAnswerWindow();
-  }
-  return { ok: true };
-});
-
-ipcMain.handle('answer:push', (_e, text) => {
-  const s = (text == null ? '' : String(text)).trim();
-  if (!s) return { ok: false };
-
-  answerHistory.push(s);
-
-  if (answerWin && !answerWin.isDestroyed()) {
-    try { answerWin.webContents.send('answer:new', s); } catch {}
-  }
-
-  return { ok: true, count: answerHistory.length };
-});
-
-ipcMain.handle('answer:getHistory', () => {
-  return { ok: true, items: answerHistory.slice() };
-});
-
-ipcMain.handle('answer:clear', () => {
-  answerHistory = [];
-  if (answerWin && !answerWin.isDestroyed()) {
-    try { answerWin.webContents.send('answer:clear'); } catch {}
-  }
-  return { ok: true };
-});
 
 
 // ---------------- File mode ----------------
@@ -1098,8 +1102,11 @@ ipcMain.handle('rec:setConfig', async(_e,cfg)=>{
 
 // ---------------- Chat + Doc ingest ----------------
 ipcMain.handle('chat:ask', async(_e, text)=>{
-  const q=(text||'').toString().trim(); if(!q) return '';
-  return await answer(q);
+  console.log("[Main → QA] Sending to QA:", text);
+const out = await answer(text);
+console.log("[QA → Main] Returned:", out);
+return out;
+
 });
 ipcMain.handle('doc:ingestText', async(_e,p)=>{
   const name=(p?.name||'document.txt').toString();

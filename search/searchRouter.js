@@ -1,26 +1,78 @@
 // search/searchRouter.js
-// Central web-search router for HaloAI (Phase 5.6–5.10)
+// Central web-search router for HaloAI (Phase 5.6–5.10 + Phase 8 Upgrades)
 
 const fetch   = require('node-fetch');
 const cheerio = require('cheerio');
 
-const { bingSearch }     = require('./engines/bing');
-const { serpapiSearch }  = require('./engines/serpapi');
-const { googlePseSearch } = require('./engines/googlePSE');
+// Existing providers
+const { bingSearch }       = require('./engines/bing');
+const { serpapiSearch }    = require('./engines/serpapi');
+const { googlePseSearch }  = require('./engines/googlePSE');
 
+// NEW Phase 8 providers
+const { braveSearch }      = require('./engines/braveApi');   // must exist
+const { groqSearch }       = require('./engines/groqApi');    // new file you added
+
+// ==============================================
+// Phase 8.4 — Missing Key Warnings (one-time)
+// ==============================================
+let warned = {
+  bing: false,
+  serpapi: false,
+  googlePSE: false,
+  brave: false,
+  groq: false
+};
+
+function warnMissingKeys(log) {
+  if (!log) return;
+
+  if (!process.env.BING_API_KEY && !warned.bing) {
+    log("⚠️ Bing API key missing — skipping Bing provider.");
+    warned.bing = true;
+  }
+  if (!process.env.SERPAPI_KEY && !warned.serpapi) {
+    log("⚠️ SerpAPI key missing — skipping SerpAPI provider.");
+    warned.serpapi = true;
+  }
+  if ((!process.env.GOOGLE_PSE_KEY || !process.env.GOOGLE_PSE_CX) && !warned.googlePSE) {
+    log("⚠️ Google PSE keys missing — skipping Google PSE.");
+    warned.googlePSE = true;
+  }
+  if (!process.env.BRAVE_API_KEY && !warned.brave) {
+    log("⚠️ Brave API key missing — skipping Brave.");
+    warned.brave = true;
+  }
+  if (!process.env.GROQ_API_KEY && !warned.groq) {
+    log("⚠️ Groq API key missing — skipping Groq Web provider.");
+    warned.groq = true;
+  }
+}
+
+
+// --------------------
+// Provider Stats
+// --------------------
 const stats = {
   bing:       { used: 0 },
   serpapi:    { used: 0 },
   googlePSE:  { used: 0 },
-  duckduckgo: { used: 0 }
+  brave:      { used: 0 },
+  groq:       { used: 0 }
 };
 
+// --------------------
+// Safe Logger
+// --------------------
 function safeLog(log, msg) {
   if (typeof log === 'function') {
     try { log(msg); } catch {}
   }
 }
 
+// --------------------
+// Provider Config (PHASE 8 VERSION)
+// --------------------
 function providerConfig() {
   return [
     {
@@ -39,50 +91,48 @@ function providerConfig() {
       searchFn: googlePseSearch
     },
     {
-      name: 'duckduckgo',
-      enabled: true,
-      searchFn: duckduckgoSearch
+      name: 'brave',
+      enabled: !!process.env.BRAVE_API_KEY,
+      searchFn: braveSearch
+    },
+    {
+      name: 'groq',
+      enabled: !!process.env.GROQ_API_KEY,
+      searchFn: groqSearch
     }
   ];
 }
 
-// Basic DuckDuckGo HTML search fallback
-async function duckduckgoSearch(query, { maxResults = 5, timeoutMs = 3000 } = {}) {
-  const q = encodeURIComponent(query);
-  const url = `https://html.duckduckgo.com/html/?q=${q}`;
+// -----------------------------------------------------------
+// PHASE 8 — queryProvider (needed for Race Engine)
+// -----------------------------------------------------------
+async function queryProvider(providerName, query, options = {}) {
+  const providers = providerConfig();
+  const found = providers.find(p => p.name === providerName && p.enabled);
+
+  if (!found) return { answer: "", provider: providerName };
+
+  const maxResults = options.maxResults || 5;
+  const timeoutMs  = options.timeoutMs  || 2500;
+
   try {
-    const res = await fetch(url, {
-      timeout: timeoutMs,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HaloAI'
-      }
-    });
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const results = [];
-    $('a.result__a').each((i, el) => {
-      if (results.length >= maxResults) return false;
-      const title = $(el).text().trim();
-      const href  = $(el).attr('href') || '';
-      if (!href) return;
-      let url = href;
-      try {
-        const u = new URL(href, 'https://duckduckgo.com');
-        url = u.href;
-      } catch {}
-      results.push({
-        title: title || url,
-        snippet: title || url,
-        url
-      });
-    });
-    return results;
-  } catch {
-    return [];
+    const list = await found.searchFn(query, { maxResults, timeoutMs });
+    if (!Array.isArray(list) || !list.length)
+      return { answer: "", provider: providerName };
+
+    return {
+      answer: list[0].snippet || "",
+      provider: providerName,
+      raw: list
+    };
+  } catch (err) {
+    return { answer: "", provider: providerName };
   }
 }
 
-// FASTEST strategy: fire all primary providers in parallel, pick first non-empty
+// -----------------------------------------------------------
+// FASTEST strategy (unchanged, except now uses new providers)
+// -----------------------------------------------------------
 async function fastestStrategy(query, providers, { maxResults, timeoutMs, mode, log }) {
   if (!providers.length) return [];
 
@@ -105,12 +155,12 @@ async function fastestStrategy(query, providers, { maxResults, timeoutMs, mode, 
         if (!resolved && Array.isArray(list) && list.length) {
           resolved = true;
           stats[p.name].used++;
-          safeLog(log, `[search] mode=${mode} query="${query}" provider=${p.name} latency=${latency}ms used=${stats[p.name].used}`);
+          safeLog(log, `[search] mode=${mode} provider=${p.name} latency=${latency}ms`);
           resolve(list.map(r => ({
-            title:   r.title   || '',
-            snippet: r.snippet || '',
-            url:     r.url     || '',
-            provider: p.name,
+            title:     r.title   || '',
+            snippet:   r.snippet || '',
+            url:       r.url     || '',
+            provider:  p.name,
             latencyMs: latency
           })));
         } else if (finished === providers.length && !resolved) {
@@ -122,12 +172,15 @@ async function fastestStrategy(query, providers, { maxResults, timeoutMs, mode, 
   });
 }
 
-// SEQUENTIAL strategy: try providers in given order, stop on first non-empty
+// -----------------------------------------------------------
+// SEQUENTIAL strategy (unchanged)
+// -----------------------------------------------------------
 async function sequentialStrategy(query, orderedNames, providers, { maxResults, timeoutMs, mode, log }) {
   const map = Object.fromEntries(providers.map(p => [p.name, p]));
   for (const name of orderedNames) {
     const p = map[name];
     if (!p || !p.enabled) continue;
+
     const t0 = Date.now();
     let list = [];
     try {
@@ -135,15 +188,18 @@ async function sequentialStrategy(query, orderedNames, providers, { maxResults, 
     } catch {
       list = [];
     }
+
     const latency = Date.now() - t0;
+
     if (Array.isArray(list) && list.length) {
       stats[name].used++;
-      safeLog(log, `[search] mode=${mode} query="${query}" provider=${name} latency=${latency}ms used=${stats[name].used}`);
+      safeLog(log, `[search] mode=${mode} provider=${name} latency=${latency}ms`);
+
       return list.map(r => ({
-        title:   r.title   || '',
-        snippet: r.snippet || '',
-        url:     r.url     || '',
-        provider: name,
+        title:     r.title   || '',
+        snippet:   r.snippet || '',
+        url:       r.url     || '',
+        provider:  name,
         latencyMs: latency
       }));
     }
@@ -151,124 +207,80 @@ async function sequentialStrategy(query, orderedNames, providers, { maxResults, 
   return [];
 }
 
-// Main entry
+// -----------------------------------------------------------
+// Main Search Function (smartSearch)
+// -----------------------------------------------------------
 async function smartSearch(query, options = {}) {
-  const modeRaw = process.env.SEARCH_MODE || 'fastest';
-  const mode = String(modeRaw).toLowerCase();
+  warnMissingKeys(options.log);
+  const modeRaw    = process.env.SEARCH_MODE || 'fastest';
+  const mode       = String(modeRaw).toLowerCase();
   const maxResults = options.maxResults || 5;
-  const timeoutMs  = options.timeoutMs || 2500;
+  const timeoutMs  = options.timeoutMs  || 2500;
   const log        = options.log;
-
-  const providers = providerConfig();
-  const primary = providers.filter(p => p.name !== 'duckduckgo' && p.enabled);
-  const ddg     = providers.find(p => p.name === 'duckduckgo');
 
   if (!query || !query.trim()) return [];
 
-  if (mode === 'local-only') {
-    safeLog(log, `[search] mode=local-only — skipping web for query="${query}"`);
-    return [];
-  }
+  const providers = providerConfig();
+  const enabled = providers.filter(p => p.enabled);
 
-  // No primary engines configured → go straight to DuckDuckGo
-  if (!primary.length && ddg) {
-    const t0 = Date.now();
-    const list = await ddg.searchFn(query, { maxResults, timeoutMs });
-    const latency = Date.now() - t0;
-    if (Array.isArray(list) && list.length) {
-      stats.duckduckgo.used++;
-      safeLog(log, `[search] mode=${mode} query="${query}" provider=duckduckgo latency=${latency}ms used=${stats.duckduckgo.used}`);
-      return list.map(r => ({
-        title:   r.title   || '',
-        snippet: r.snippet || '',
-        url:     r.url     || '',
-        provider: 'duckduckgo',
-        latencyMs: latency
-      }));
-    }
-    return [];
-  }
+  if (!enabled.length) return [];
 
   let results = [];
 
   if (mode === 'cheapest') {
-    const order = ['googlePSE', 'bing', 'serpapi'];
+    const order = ['googlePSE', 'bing', 'serpapi', 'brave', 'groq'];
     results = await sequentialStrategy(query, order, providers, { maxResults, timeoutMs, mode, log });
-  } else if (mode === 'accurate') {
-    const order = ['bing', 'serpapi', 'googlePSE'];
+  } 
+  else if (mode === 'accurate') {
+    const order = ['bing', 'serpapi', 'googlePSE', 'brave', 'groq'];
     results = await sequentialStrategy(query, order, providers, { maxResults, timeoutMs, mode, log });
-  } else { // fastest (default)
-    results = await fastestStrategy(query, primary, { maxResults, timeoutMs, mode, log });
+  } 
+  else {
+    // fastest (default)
+    results = await fastestStrategy(query, enabled, { maxResults, timeoutMs, mode, log });
   }
 
-  // Fallback to DuckDuckGo if nothing came back
-  if ((!results || !results.length) && ddg) {
-    safeLog(log, `[search] all primary providers failed, falling back to duckduckgo`);
-    const t0 = Date.now();
-    const list = await ddg.searchFn(query, { maxResults, timeoutMs });
-    const latency = Date.now() - t0;
-    if (Array.isArray(list) && list.length) {
-      stats.duckduckgo.used++;
-      safeLog(log, `[search] mode=${mode} query="${query}" provider=duckduckgo latency=${latency}ms used=${stats.duckduckgo.used}`);
-      return list.map(r => ({
-        title:   r.title   || '',
-        snippet: r.snippet || '',
-        url:     r.url     || '',
-        provider: 'duckduckgo',
-        latencyMs: latency
-      }));
-    }
-  }
+  if (!results || !results.length) return [];
 
- const { rescoreSnippets } = require('./searchRouter'); // at top if needed
-
-// --- END OF PRIMARY SEARCH LOGIC ---
-
-if (!results || !results.length) return [];
-
-// Apply rescoring on final snippet set
-const rescored = rescoreSnippets(results, query, 4);
-return rescored;
+  const rescored = rescoreSnippets(results, query, 4);
+  return rescored;
 }
 
+// -----------------------------------------------------------
+// Provider Stats (unchanged)
+// -----------------------------------------------------------
 function getProviderStats() {
   return JSON.parse(JSON.stringify(stats));
 }
 
-// =====================================================
-// SNIPPET RESCORING ENGINE (Phase 6.4)
-// =====================================================
-
-// Provider weights (tunable)
+// -----------------------------------------------------------
+// SNIPPET RESCORING (unchanged)
+// -----------------------------------------------------------
 const PROVIDER_WEIGHT = {
   bing: 1.2,
   serpapi: 1.1,
   googlePSE: 1.0,
-  duckduckgo: 0.8
+  brave: 1.0,
+  groq: 0.9
 };
 
-// Score one snippet
 function scoreSnippet(snippet, query, provider) {
   const text = (snippet || '').toLowerCase();
   const q = (query || '').toLowerCase();
 
-  // Keyword match
   let keywordScore = 0;
   const words = q.split(/\s+/);
   for (const w of words) {
     if (w.length > 3 && text.includes(w)) keywordScore++;
   }
 
-  // Snippet length score
   const lengthScore = Math.min((snippet || '').length / 80, 2);
 
-  // Provider trust
   const providerScore = PROVIDER_WEIGHT[provider] || 1.0;
 
   return (keywordScore + lengthScore) * providerScore;
 }
 
-// Top-N rescoring
 function rescoreSnippets(snippets, query, topN = 4) {
   return snippets
     .map(s => ({
@@ -279,9 +291,12 @@ function rescoreSnippets(snippets, query, topN = 4) {
     .slice(0, topN);
 }
 
-// Final exports
+// -----------------------------------------------------------
+// EXPORTS
+// -----------------------------------------------------------
 module.exports = {
   smartSearch,
   getProviderStats,
-  rescoreSnippets
+  rescoreSnippets,
+  queryProvider  // <-- NEW PHASE 8
 };

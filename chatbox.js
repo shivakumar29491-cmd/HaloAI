@@ -91,15 +91,26 @@ this.transcript?.setAttribute('spellcheck', 'false');
     // 3) Ask backend (no AI bubble to transcript)
     const ans = await window.electron.invoke('chat:ask', q);
 
-    // 4) Answers go ONLY to the Answer textarea
+       // 4) Answers go ONLY to the Answer area (textarea or div)
     if (this.answer && typeof ans === 'string') {
       const s = ans.trim();
       if (s && !this._isStatusyBanner(s)) {
-        const sep = this.answer.value ? '\n---\n' : '';
-        this.answer.value = this.answer.value + sep + s;
-        this.answer.scrollTop = this.answer.scrollHeight;
+        if (this.answer.tagName === 'DIV') {
+          // New UI: div-based answer log
+          const entry = document.createElement('div');
+          entry.className = 'answer-block answer-entry';
+          entry.textContent = s;
+          this.answer.appendChild(entry);
+          this.answer.scrollTop = this.answer.scrollHeight;
+        } else {
+          // Legacy textarea-based UI
+          const sep = this.answer.value ? '\n---\n' : '';
+          this.answer.value = (this.answer.value || '') + sep + s;
+          this.answer.scrollTop = this.answer.scrollHeight;
+        }
       }
     }
+
   }
 
   async ingest() {

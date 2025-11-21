@@ -43,15 +43,13 @@
     <section id="tab-live" class="panel show">
       <div class="glass">
 
-        <!-- Transcript box (single source of truth) -->
-        <div class="qa-block glass" style="margin-top:10px;">
-          <div class="answer-header">
-            <label>Transcript</label>
-          </div>
-          <textarea
-          id="liveTranscript" class="qa-textarea" rows="10" spellcheck="false" readonly></textarea>
+    <!-- Transcript box (single source of truth) -->
+<div id="transcript-container" class="glass">
+  <label>Transcript</label>
+  <textarea id="liveTranscript" spellcheck="false" readonly></textarea>
+  <textarea id="transcript" style="display:none;"></textarea>
+</div>
 
-        </div>
 
         <div class="chat-header-row">
           <span id="docBadge" class="doc-badge hidden"></span>
@@ -69,14 +67,13 @@
 
         <!-- Answer -->
         <div class="answer-box">
-          
-          <label>Answer <a id="clearAnswer" href="javascript:void(0)">🧹</a>
+  <label>Answer <a id="clearAnswer" href="javascript:void(0)">🧹</a></label>
 
-          
-          </label>
-            <button id="popoutAnswer" class="popout-btn">⤢</button>
+  <div id="liveAnswerContainer" class="answer-container">
+    <div id="liveAnswer" class="answer-content"></div>
+  </div>
+</div>
 
-          <div id="liveAnswer" class="qa-textarea answer-log"></div>
 
         </div>
       </div>

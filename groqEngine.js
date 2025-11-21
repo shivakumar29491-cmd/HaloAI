@@ -1,6 +1,5 @@
 // -----------------------------------------------------------
-//  groqEngine.js — FINAL STABLE VERSION (2025)
-//  Uses latest Groq API + corrected model names
+//  groqEngine.js — LLM Answer Engine (ROOT FOLDER)
 // -----------------------------------------------------------
 
 const Groq = require("groq-sdk");
@@ -8,7 +7,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 
 // -----------------------------------------------------------
-// 1. TRANSCRIPTION (Whisper)
+// 1. GROQ WHISPER TRANSCRIPTION
 // -----------------------------------------------------------
 async function groqWhisperTranscribe(audioBuffer) {
   try {
@@ -30,17 +29,16 @@ async function groqWhisperTranscribe(audioBuffer) {
 
 
 // -----------------------------------------------------------
-// 2. FAST AI ANSWER (main answering engine)
+// 2. FAST LLM ANSWER (MAIN AI ENGINE)
 // -----------------------------------------------------------
-// MODEL MUST BE VALID (old ones removed)
-// Recommended: llama-3.1-8b-instant  (fast + accurate)
+// Recommended model: llama-3.1-8b-instant
 async function groqFastAnswer(prompt) {
   try {
     const completion = await groq.chat.completions.create({
       messages: [
         { role: "user", content: prompt }
       ],
-      model: "llama-3.1-8b-instant",   // <-- NEW **WORKING** MODEL
+      model: "llama-3.1-8b-instant",
       temperature: 0.2
     });
 
