@@ -1,19 +1,16 @@
-import fetch from "node-fetch";
+// api/search/router.js
+const fetch = require("node-fetch");
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   try {
-    // Support GET + POST
-    const query = req.query.q || (req.body && req.body.query);
-    const maxResults = Number(req.query.maxResults || (req.body && req.body.maxResults) || 5);
+    const query = req.query.q || req.body?.query;
+    const maxResults = Number(req.query.maxResults || req.body?.maxResults || 5);
 
-    if (!query || !query.trim()) {
-      return res.status(400).json({ error: "Missing query" });
-    }
+    if (!query) return res.status(400).json({ error: "Missing query" });
 
-    // Providers
     const endpoints = [
       { name: "brave", url: "/api/search/braveApi" },
-      { name: "bing", url: "/api/search/bing" },
+     // { name: "bing", url: "/api/search/bing" },
       { name: "serpapi", url: "/api/search/serpapi" },
       { name: "googlePSE", url: "/api/search/googlePSE" },
       { name: "groq", url: "/api/search/groq" }
@@ -21,7 +18,7 @@ export default async function handler(req, res) {
 
     const base = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
-      : "https://haloai-clean.vercel.app";
+      : "http://localhost:3000";
 
     const calls = endpoints.map(ep =>
       fetch(`${base}${ep.url}`, {
@@ -43,4 +40,4 @@ export default async function handler(req, res) {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
-}
+};

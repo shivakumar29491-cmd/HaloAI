@@ -3,7 +3,6 @@ const Groq = require("groq-sdk");
 
 module.exports = async function handler(req, res) {
   try {
-    // Allow POST only
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Method Not Allowed" });
     }
@@ -11,13 +10,8 @@ module.exports = async function handler(req, res) {
     const { prompt } = req.body || {};
     const key = process.env.GROQ_API_KEY;
 
-    if (!key) {
-      return res.status(500).json({ error: "Missing GROQ_API_KEY" });
-    }
-
-    if (!prompt) {
-      return res.status(400).json({ error: "Missing prompt" });
-    }
+    if (!key) return res.status(500).json({ error: "Missing GROQ_API_KEY" });
+    if (!prompt) return res.status(400).json({ error: "Missing prompt" });
 
     const groq = new Groq({ apiKey: key });
 
