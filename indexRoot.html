@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>HaloAI — Transcribe & Answer</title>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+  <link rel="stylesheet" href="haloAIRoot.css" />
+</head>
+<body>
+  <div class="app-surface">
+    <!-- Window chrome -->
+    <div class="window-chrome glass">
+      <div class="title">HaloAI — Transcribe & Answer</div>
+      <div class="win-buttons">
+        <button id="btn-min" title="Minimize">–</button>
+        <button id="btn-max" title="Maximize">□</button>
+        <button id="btn-close" title="Close">×</button>
+      </div>
+    </div>
+
+    <!-- Tabs + live controls -->
+    <div class="tabs">
+      <button class="tab active" data-tab="live">Live</button>
+      <button class="tab" data-tab="pre">Pre-recorded</button>
+      <button class="tab" data-tab="logs">Logs</button>
+
+      <div class="live-controls">
+        <label class="search-label" for="searchMode">Search:</label>
+        <select id="searchMode">
+          <option value="fastest">Fastest</option>
+          <option value="cheapest">Cheapest</option>
+          <option value="accurate">Most accurate</option>
+          <option value="local">Local only</option>
+        </select>
+        <span id="liveState">idle</span>
+        <button id="companionToggle" class="ghost toggle" title="Live Companion">Companion</button>
+         <button id="screenReadBtn" class="ghost" title="Read text from current screen">Screen Read</button>
+      </div>
+    </div>
+
+    <!-- Live -->
+    <section id="tab-live" class="panel show">
+      <div class="glass">
+
+    <!-- Transcript box (single source of truth) -->
+<div id="transcript-container" class="glass">
+  <label>Transcript</label>
+  <textarea id="liveTranscript" spellcheck="false" readonly></textarea>
+  <textarea id="transcript" style="display:none;"></textarea>
+</div>
+
+
+        <div class="chat-header-row">
+          <span id="docBadge" class="doc-badge hidden"></span>
+          <button id="docToggle" class="pill-toggle">Doc</button>
+          <button id="docEnrichToggle" class="pill-toggle">Enrich</button>
+        </div>
+
+        <!-- Chat input row + attachments -->
+        <div class="chat-row">
+          <button id="fileBtn" title="Attach document">📎</button>
+          <input id="docInput" type="file" accept=".txt,.pdf" hidden />
+          <input id="chatInput" type="text" placeholder="Ask HaloAI… Press Enter" />
+          <button id="chatSend" title="Send">↪</button>
+        </div>
+
+        <!-- Answer -->
+        <div class="answer-box">
+  <label>Answer <a id="clearAnswer" href="javascript:void(0)">🧹</a></label>
+
+  <div id="liveAnswerContainer" class="answer-container">
+    <div id="liveAnswer" class="answer-content"></div>
+  </div>
+</div>
+
+
+        </div>
+      </div>
+    </section>
+
+    <!-- Pre-recorded -->
+    <section id="tab-pre" class="panel">
+      <div class="glass">
+        <div class="row">
+          <button id="pickAudioBtn">Pick audio</button>
+          <button id="transcribeBtn">Transcribe</button>
+          <button id="clearBtn">Clear</button>
+          <span id="pickedPath"></span>
+        </div>
+        <textarea id="fileOutput" rows="12" spellcheck="false"></textarea>
+      </div>
+    </section>
+
+    <!-- Logs -->
+    <section id="tab-logs" class="panel">
+      <div class="glass">
+        <label>API usage (this session)</label>
+        <div id="apiUsagePanel" class="api-usage-panel"></div>
+      </div>
+      <div class="glass">
+        <label>Logs</label>
+        <textarea id="liveLog" rows="20" spellcheck="false"></textarea>
+      </div>
+    </section>
+
+    <script src="chatbox.js"></script>
+    <script src="renderer.js"></script>
+  </div>
+</body>
+</html>

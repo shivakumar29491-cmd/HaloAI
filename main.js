@@ -25,8 +25,8 @@ const { groqWhisperTranscribe, groqFastAnswer } = require("./groqEngine");
 
 
 
-const { smartSearch, getProviderStats } = require('./search/searchRouter');
-const { BraveApi }    = require('./search/engines/braveApi');
+const { smartSearch, getProviderStats } = require('./searchRoot/searchRouter');
+const { BraveApi }    = require('./searchRoot/engines/braveApi');
 const { initScreenReader } = require('./screenReader');
 
 process.env.PATH = [
@@ -244,7 +244,7 @@ async function cachedSmartSearch(query, opts = {}) {
   }
 
   const t0 = Date.now();
-  const { unifiedWebSearch } = require("./search/searchRouter");
+  const { unifiedWebSearch } = require("./searchRoot/searchRouter");
 const results = await unifiedWebSearch(query, 5);
 
   const ms = Date.now() - t0;
@@ -742,31 +742,44 @@ async function genericAnswer(userText){
 async function answer(userText) {
   const q = (userText || '').trim();
   send("log", `[answer()] received prompt: ${q}`);
-console.log("[answer()] received prompt:", q);
+  console.log("[answer()] received prompt:", q);
 
   if (!q) return '';
 
-  // 1) GROQ FAST ANSWER FIRST
+  // --------------------------------------
+  // 1) GROQ FAST ANSWER (PRIMARY ENGINE)
+  // --------------------------------------
   try {
     const fast = await groqFastAnswer(q);
 
-// If Groq returned a meaningful answer (more than 2 characters)
-if (fast && typeof fast === "string" && fast.trim().length > 2) {
-  return fast.trim();
-}
+    // More than 2 chars ensures real content (prevents "OK" / blanks)
+    if (fast && typeof fast === "string" && fast.trim().length > 2) {
+      send("log", "[Groq] Primary engine succeeded.");
+      return fast.trim();
+    } else {
+      send("log", "[Groq] Returned empty/short content, skipping.");
+    }
   } catch (err) {
     send("log", `[Groq fast error] ${err.message}`);
   }
 
-  // 2) BRAVE DIRECT SUMMARY (super fast)
+  // --------------------------------------
+  // 2) BRAVE FALLBACK (SECOND)
+  // --------------------------------------
   try {
     const brave = await braveWebSummary(q, 5);
-    if (brave) return brave;
+
+    if (brave && brave.trim().length > 0) {
+      send("log", "[Brave] Fallback summary succeeded.");
+      return brave;
+    }
   } catch (err) {
     send("log", `[Brave error] ${err.message}`);
   }
 
-  // 3) ROUTED WEB SEARCH (Bing, SerpAPI, PSE...)
+  // --------------------------------------
+  // 3) ROUTED WEB SEARCH (THIRD FALLBACK)
+  // --------------------------------------
   try {
     const results = await cachedSmartSearch(q, {
       maxResults: 5,
@@ -774,6 +787,8 @@ if (fast && typeof fast === "string" && fast.trim().length > 2) {
     });
 
     if (results && results.length) {
+      send("log", "[Router] Routed web search succeeded.");
+
       const bullets = results
         .map(r => {
           const base = r.snippet?.trim() || r.title?.trim() || "";
@@ -790,9 +805,13 @@ if (fast && typeof fast === "string" && fast.trim().length > 2) {
     send("log", `[Router error] ${err.message}`);
   }
 
-  // 4) OPENAI FALLBACK (only if API key exists)
+  // --------------------------------------
+  // 4) OPENAI FINAL RESCUE FALLBACK
+  // --------------------------------------
   if (process.env.OPENAI_API_KEY) {
     try {
+      send("log", "[OpenAI] Using final fallback.");
+
       const r = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -812,18 +831,24 @@ if (fast && typeof fast === "string" && fast.trim().length > 2) {
 
       const txt = await r.text();
       let json;
-      try { json = JSON.parse(txt); } catch {}
+      try {
+        json = JSON.parse(txt);
+      } catch {}
 
       const out = json?.choices?.[0]?.message?.content?.trim();
       if (out) return out;
+
     } catch (err) {
       send("log", `[OpenAI fallback error] ${err.message}`);
     }
   }
 
-  // 5) If absolutely everything failed
+  // --------------------------------------
+  // 5) ABSOLUTE LAST RETURN
+  // --------------------------------------
   return `I couldn't find information for "${q}".`;
 }
+
 
 
 // --------------- Live / question classifiers (5.13) ---------------
