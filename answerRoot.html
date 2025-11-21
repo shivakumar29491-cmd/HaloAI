@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>HaloAI — Answers</title>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+  <link rel="stylesheet" href="haloAI.css" />
+</head>
+<body class="popout-body">
+  <div class="app-surface">
+    <div class="window-chrome glass">
+      <div class="title">Answers</div>
+      <div class="win-buttons">
+        <button id="btn-close-pop" title="Close">×</button>
+      </div>
+    </div>
+
+    <section class="panel active">
+      <div class="glass">
+        <div id="popoutAnswerLog" class="qa-textarea answer-log"></div>
+      </div>
+    </section>
+  </div>
+
+  <script src="answerRenderer.js"></script>
+</body>
+</html>

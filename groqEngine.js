@@ -34,31 +34,25 @@ async function groqWhisperTranscribe(audioBuffer) {
 // -----------------------------------------------------------
 async function groqFastAnswer(prompt) {
   try {
-    const res = await fetch("https://haloai-clean.vercel.app/api/chat/groq", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ prompt })
-    });
+   const result = await groq.chat.completions.create({
+  model: "llama-3.1-8b-instant",
+  messages: [
+    { role: "system", content: "You are HaloAI. Provide a direct, concise answer." },
+    { role: "user", content: prompt }
+  ],
+  temperature: 0.2,
+  max_tokens: 200
+});
 
-    const json = await res.json();
+    const text = result.choices?.[0]?.message?.content || "";
+    return text.trim();
 
-    if (json?.answer) {
-      return json.answer.trim();
-    }
-
-    if (json?.error) {
-      console.error("Groq Backend Error:", json.error);
-      return "";
-    }
-
-    return "";
   } catch (err) {
-    console.error("Groq Backend Fetch Error:", err.message);
+    console.error("Groq Direct API Error:", err.message);
     return "";
   }
 }
+
 
 // -----------------------------------------------------------
 // EXPORTS
