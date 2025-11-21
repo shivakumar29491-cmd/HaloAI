@@ -52,7 +52,7 @@ async function askGroq(prompt) {
 // Call Search Engines (router logic)
 async function askSearch(prompt) {
   try {
-    const res = await fetch(`/api/search/router?q=${encodeURIComponent(prompt)}`);
+  const res = await fetch(`/api/router?q=${encodeURIComponent(prompt)}`);
     const data = await res.json();
     return data?.answer || JSON.stringify(data);
   } catch (e) {
