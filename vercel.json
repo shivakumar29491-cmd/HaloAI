@@ -1,10 +1,10 @@
 {
   "version": 2,
+  "public": "public",
   "builds": [
-    { "src": "api/search/groq.js", "use": "@vercel/node" },
     { "src": "api/**/*.js", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/api/search/groq", "dest": "/api/search/groq.js" }
+    { "src": "/api/(.*)", "dest": "/api/$1" }
   ]
 }
