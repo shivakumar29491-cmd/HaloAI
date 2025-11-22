@@ -2,12 +2,19 @@
 const Groq = require("groq-sdk");
 
 module.exports = async function handler(req, res) {
+  console.log("---- [GROQ SEARCH] Incoming request ----");
+
   try {
     const { query, maxResults = 5 } = req.body || {};
+    console.log("[GROQ SEARCH] Query:", query);
+
     const key = process.env.GROQ_API_KEY;
+    console.log("[GROQ SEARCH] API Key exists:", !!key);
 
     if (!key) return res.status(500).json({ error: "Missing GROQ_API_KEY" });
     if (!query) return res.status(400).json({ error: "Missing query" });
+
+    console.time("[GROQ SEARCH] Completion Time");
 
     const groq = new Groq({ apiKey: key });
 
@@ -21,7 +28,10 @@ module.exports = async function handler(req, res) {
       max_tokens: 120
     });
 
+    console.timeEnd("[GROQ SEARCH] Completion Time");
+
     const text = completion.choices?.[0]?.message?.content || "";
+    console.log("[GROQ SEARCH] Raw response:", text);
 
     return res.status(200).json({
       results: [{
@@ -33,6 +43,7 @@ module.exports = async function handler(req, res) {
     });
 
   } catch (err) {
+    console.error("[GROQ SEARCH] Error:", err);
     return res.status(500).json({ error: err.message });
   }
 };
