@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    background: rgba(0,0,0,0.35); /* darkened screen */
+  }
+
+  #selectionBox {
+    position: absolute;
+    border: 2px solid #4da3ff;
+    background: rgba(77,163,255,0.15);
+    display: none;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="selectionBox"></div>
+
+<script src="./snipOverlay.js"></script>
+
+</body>
+</html>

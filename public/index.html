@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HaloAI Web</title>
+  <link rel="stylesheet" href="haloAI.css" />
+</head>
+
+<body>
+  <div class="app-surface">
+    <div class="window-chrome glass">
+      <div class="title">HaloAI — Web</div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="live">Chat</button>
+      <button class="tab" data-tab="logs">Logs</button>
+    </div>
+
+    <section id="tab-live" class="panel show">
+      <div class="glass">
+
+        <label>Transcript</label>
+        <textarea id="liveTranscript" readonly></textarea>
+
+        <!-- Chat Row -->
+        <div class="chat-row">
+          <input id="chatInput" type="text" placeholder="Ask HaloAI…" />
+          <button id="chatSend">Send</button>
+        </div>
+
+        <!-- Answer -->
+        <div class="answer-box">
+          <label>Answer</label>
+          <div id="liveAnswerContainer" class="answer-container">
+            <div id="liveAnswer" class="answer-content"></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="tab-logs" class="panel">
+      <div class="glass">
+        <label>Logs</label>
+        <textarea id="liveLog" rows="20" spellcheck="false"></textarea>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="web-renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Node.js & VS Code
+node_modules/
+.DS_Store
+.env
+.vscode/
+dist/
+tmp/
+*.wav
+*.txt
+*.log
+*.mp3
+*.m4a
+*.ogg
+.vercel

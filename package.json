@@ -1,0 +1,22 @@
+{
+  "name": "haloai",
+  "version": "0.0.3",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2",
+    "dotenv": "^16.4.5",
+    "groq-sdk": "^0.36.0",
+    "mic": "^2.1.2",
+    "node-fetch": "^2.7.0",
+    "pdf-parse": "^1.1.4",
+    "screenshot-desktop": "^1.15.3",
+    "sharp": "^0.34.5",
+    "tesseract.js": "^6.0.1"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0"
+  }
+}
